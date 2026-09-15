@@ -1,0 +1,150 @@
+/* === CSS-переменные: дефолты + Telegram-тема === */
+:root {
+  --tg-bg: #1a1a2e;
+  --tg-text: #e0e0e0;
+  --tg-hint: #8e8e93;
+  --tg-button: #5b6eae;
+  --tg-button-text: #ffffff;
+  --tg-secondary-bg: #16213e;
+
+  --scene-max-width: 480px;
+  --spacing: 16px;
+  --radius: 12px;
+  --transition: 0.3s ease;
+}
+
+/* === Базовые стили === */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  overflow-x: hidden;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--tg-text);
+  background: var(--tg-bg);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--spacing);
+}
+
+/* === Сцена === */
+.scene {
+  width: 100%;
+  max-width: var(--scene-max-width);
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity var(--transition), transform var(--transition);
+}
+
+.scene--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* === Изображение сцены === */
+.scene-image {
+  width: 100%;
+  max-width: 100%;
+  border-radius: var(--radius);
+  margin-bottom: var(--spacing);
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+}
+
+/* === Текст сцены === */
+.scene-text {
+  font-size: 1.05rem;
+  line-height: 1.7;
+  padding: var(--spacing);
+  background: var(--tg-secondary-bg);
+  border-radius: var(--radius);
+  margin-bottom: var(--spacing);
+  white-space: pre-line;
+}
+
+/* === Кнопки выбора === */
+.choices {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.choice-btn {
+  width: 100%;
+  padding: 14px var(--spacing);
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--tg-button-text);
+  background: var(--tg-button);
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: opacity var(--transition), transform 0.15s ease;
+  text-align: left;
+  -webkit-appearance: none;
+}
+
+.choice-btn:active {
+  opacity: 0.8;
+  transform: scale(0.98);
+}
+
+/* === Загрузка === */
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  font-size: 1.1rem;
+  color: var(--tg-hint);
+}
+
+/* === Ошибка === */
+.error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing);
+  min-height: 60vh;
+  text-align: center;
+  color: var(--tg-hint);
+  max-width: var(--scene-max-width);
+}
+
+/* === Режим браузера (вне Telegram) === */
+.browser-mode body {
+  background: #0f0f23;
+}
+
+/* === Адаптация под маленькие экраны === */
+@media (max-width: 360px) {
+  :root {
+    --spacing: 12px;
+  }
+
+  .scene-text {
+    font-size: 0.95rem;
+  }
+
+  .choice-btn {
+    padding: 12px var(--spacing);
+    font-size: 0.9rem;
+  }
+}
