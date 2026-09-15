@@ -23,9 +23,13 @@ export function saveProgress(state: GameState): void {
 
   // Основное хранение в Telegram CloudStorage
   if (tg?.CloudStorage) {
-    tg.CloudStorage.setItem(STORAGE_KEY, data, (error) => {
-      if (error) console.error('CloudStorage save error:', error)
-    })
+    try {
+      tg.CloudStorage.setItem(STORAGE_KEY, data, (error) => {
+        if (error) console.error('CloudStorage save error:', error)
+      })
+    } catch {
+      // CloudStorage может быть недоступен в старых версиях — игнорируем
+    }
   }
 }
 
@@ -33,13 +37,17 @@ export function saveProgress(state: GameState): void {
 export async function loadProgress(): Promise<GameState | null> {
   // Пробуем Telegram CloudStorage (приоритет)
   if (tg?.CloudStorage) {
-    const cloudState = await loadFromCloud()
-    if (cloudState) {
-      // Обновляем localStorage-кэш
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(cloudState))
-      } catch { /* ignore */ }
-      return cloudState
+    try {
+      const cloudState = await loadFromCloud()
+      if (cloudState) {
+        // Обновляем localStorage-кэш
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(cloudState))
+        } catch { /* ignore */ }
+        return cloudState
+      }
+    } catch {
+      // CloudStorage может быть недоступен — фоллбэк на localStorage
     }
   }
 
@@ -82,6 +90,8 @@ export function resetProgress(): void {
   } catch { /* ignore */ }
 
   if (tg?.CloudStorage) {
-    tg.CloudStorage.removeItem(STORAGE_KEY)
+    try {
+      tg.CloudStorage.removeItem(STORAGE_KEY)
+    } catch { /* ignore */ }
   }
 }
