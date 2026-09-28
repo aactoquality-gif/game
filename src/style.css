@@ -1,16 +1,27 @@
-/* === CSS-переменные: дефолты + Telegram-тема === */
+/* === Палитра «cozy dark». Своя, не из темы Telegram: настроение истории не должно зависеть от светлой темы игрока === */
 :root {
-  --tg-bg: #1a1a2e;
-  --tg-text: #e0e0e0;
-  --tg-hint: #8e8e93;
-  --tg-button: #5b6eae;
-  --tg-button-text: #ffffff;
-  --tg-secondary-bg: #16213e;
+  --game-bg: #14121a;            /* совпадает с GAME_BG в telegram.ts */
+  --panel-bg: rgba(20, 18, 28, 0.9);
+  --panel-border: rgba(236, 230, 220, 0.08);
+  --text: #ece6dc;
+  --hint: #9a93a6;
+  --accent: #c9a86a;             /* латунь: плашка имени, индикатор «дальше» */
+  --accent-text: #1a1620;
+  --choice-bg: rgba(236, 230, 220, 0.06);
+  --choice-bg-active: rgba(236, 230, 220, 0.14);
+  --choice-border: rgba(236, 230, 220, 0.2);
+  --push-bg: rgba(244, 241, 235, 0.97);
+  --push-text: #1d1b22;
+  --push-muted: #6b6573;
 
-  --scene-max-width: 480px;
-  --spacing: 16px;
-  --radius: 12px;
-  --transition: 0.3s ease;
+  --radius: 14px;
+  --gap: 16px;
+  --reading-width: 560px;
+
+  /* Отступы под «чёлку», системные панели и кнопки Telegram в полноэкранном режиме */
+  --safe-top: max(env(safe-area-inset-top, 0px), var(--tg-safe-area-inset-top, 0px));
+  --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--tg-safe-area-inset-bottom, 0px));
+  --content-top: var(--tg-content-safe-area-inset-top, 0px);
 }
 
 /* === Базовые стили === */
@@ -22,129 +33,271 @@
 
 html, body {
   height: 100%;
-  overflow-x: hidden;
+  overflow: hidden;
+  background: var(--game-bg);
 }
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  font-size: 16px;
-  line-height: 1.6;
-  color: var(--tg-text);
-  background: var(--tg-bg);
+  font-size: 17px;
+  line-height: 1.55;
+  color: var(--text);
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
 }
 
 #app {
-  min-height: 100vh;
+  position: fixed;
+  inset: 0;
+}
+
+/* === Сцена: фон на весь экран, контент прижат к низу === */
+.stage {
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  padding: var(--spacing);
-}
-
-/* === Сцена === */
-.scene {
-  width: 100%;
-  max-width: var(--scene-max-width);
+  justify-content: flex-end;
+  padding:
+    calc(var(--safe-top) + var(--content-top) + var(--gap))
+    var(--gap)
+    calc(var(--safe-bottom) + var(--gap));
+  background-color: var(--game-bg);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
   opacity: 0;
-  transform: translateY(10px);
-  transition: opacity var(--transition), transform var(--transition);
+  transition: opacity 0.25s ease;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
-.scene--visible {
+.stage--visible {
   opacity: 1;
-  transform: translateY(0);
 }
 
-/* === Изображение сцены === */
-.scene-image {
+/* Пока нет иллюстрации — тёмный градиент вместо фона */
+.stage--no-art {
+  background-image: radial-gradient(120% 80% at 50% 18%, #2c2638 0%, #14121a 70%);
+}
+
+.stage--tappable {
+  cursor: pointer;
+}
+
+/* === Диалог: плашка имени + панель текста === */
+.dialog {
   width: 100%;
-  max-width: 100%;
-  border-radius: var(--radius);
-  margin-bottom: var(--spacing);
-  aspect-ratio: 16 / 9;
-  object-fit: cover;
+  max-width: var(--reading-width);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
 }
 
-/* === Текст сцены === */
-.scene-text {
-  font-size: 1.05rem;
-  line-height: 1.7;
-  padding: var(--spacing);
-  background: var(--tg-secondary-bg);
+.speaker {
+  position: relative;
+  z-index: 1;
+  margin: 0 0 -10px 14px;
+  padding: 4px 12px;
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-radius: 8px;
+}
+
+.panel {
+  align-self: stretch;
+  max-height: 64vh;
+  overflow-y: auto;
+  padding: 18px 18px 12px;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
   border-radius: var(--radius);
-  margin-bottom: var(--spacing);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+}
+
+.panel--speech {
+  padding-top: 22px;
+}
+
+.text {
   white-space: pre-line;
 }
 
-/* === Кнопки выбора === */
+.continue {
+  margin-top: 4px;
+  text-align: right;
+  color: var(--accent);
+  font-size: 15px;
+  line-height: 1;
+}
+
+/* === Выборы === */
 .choices {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  margin: 16px 0 6px;
 }
 
-.choice-btn {
+.choice {
   width: 100%;
-  padding: 14px var(--spacing);
-  font-size: 0.95rem;
-  font-weight: 500;
-  color: var(--tg-button-text);
-  background: var(--tg-button);
-  border: none;
-  border-radius: var(--radius);
-  cursor: pointer;
-  transition: opacity var(--transition), transform 0.15s ease;
+  padding: 13px 16px;
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.4;
   text-align: left;
+  color: var(--text);
+  background: var(--choice-bg);
+  border: 1px solid var(--choice-border);
+  border-radius: 12px;
+  cursor: pointer;
   -webkit-appearance: none;
+  appearance: none;
+  transition: background 0.15s ease, transform 0.15s ease;
 }
 
-.choice-btn:active {
-  opacity: 0.8;
-  transform: scale(0.98);
+.choice:active {
+  background: var(--choice-bg-active);
+  transform: scale(0.99);
 }
 
-/* === Загрузка === */
-.loading {
+.choice--center {
+  text-align: center;
+}
+
+/* === «Пуш» — уведомление поверх сцены === */
+.stage--push {
+  justify-content: space-between;
+}
+
+.push {
+  width: 100%;
+  max-width: var(--reading-width);
+  margin: 0 auto;
+  padding: 12px 14px 14px;
+  background: var(--push-bg);
+  color: var(--push-text);
+  border-radius: 18px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  transform: translateY(-12px);
+  transition: transform 0.3s ease;
+}
+
+.stage--visible .push {
+  transform: none;
+}
+
+.push__head {
   display: flex;
   align-items: center;
-  justify-content: center;
-  min-height: 60vh;
-  font-size: 1.1rem;
-  color: var(--tg-hint);
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: var(--push-muted);
 }
 
-/* === Ошибка === */
+.push__icon {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: #2b2733;
+  color: #f4f1eb;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.push__sender {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #2b2733;
+}
+
+.push__time {
+  margin-left: auto;
+}
+
+.push__text {
+  font-size: 15px;
+  line-height: 1.45;
+  white-space: pre-line;
+}
+
+.tap-hint {
+  text-align: center;
+  color: var(--hint);
+  font-size: 13px;
+}
+
+/* === Карточка конца эпизода === */
+.stage--end {
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+}
+
+.end {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  max-width: 360px;
+}
+
+.end__title {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.end__text {
+  color: var(--hint);
+  white-space: pre-line;
+}
+
+/* === Загрузка и ошибка === */
+.loading,
 .error {
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--spacing);
-  min-height: 60vh;
+  gap: var(--gap);
+  padding: 24px;
   text-align: center;
-  color: var(--tg-hint);
-  max-width: var(--scene-max-width);
+  color: var(--hint);
 }
 
-/* === Режим браузера (вне Telegram) === */
-.browser-mode body {
-  background: #0f0f23;
+.error .choice {
+  max-width: 320px;
 }
 
-/* === Адаптация под маленькие экраны === */
+/* === Маленькие экраны === */
 @media (max-width: 360px) {
   :root {
-    --spacing: 12px;
+    --gap: 12px;
   }
 
-  .scene-text {
-    font-size: 0.95rem;
+  body {
+    font-size: 16px;
   }
 
-  .choice-btn {
-    padding: 12px var(--spacing);
-    font-size: 0.9rem;
+  .panel {
+    padding: 14px 14px 10px;
+  }
+
+  .choice {
+    padding: 12px 14px;
+    font-size: 15px;
   }
 }

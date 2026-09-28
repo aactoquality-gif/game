@@ -12,7 +12,7 @@
  */
 
 import type { GameState } from './types'
-import { tg } from './telegram'
+import { tg, cloudStorageSupported } from './telegram'
 
 const STORAGE_KEY = 'game_state'
 
@@ -31,13 +31,13 @@ export function saveProgress(state: GameState): void {
   }
 
   // Затем в Telegram CloudStorage — в фоне, не ждём ответа
-  if (tg?.CloudStorage) {
+  if (cloudStorageSupported) {
     try {
-      tg.CloudStorage.setItem(STORAGE_KEY, data, (error) => {
+      tg!.CloudStorage.setItem(STORAGE_KEY, data, (error) => {
         if (error) console.error('CloudStorage save error:', error)
       })
     } catch {
-      // CloudStorage может быть недоступен в старых версиях — игнорируем
+      // Сбой облака не должен ломать игру — копия на устройстве уже записана
     }
   }
 }
@@ -58,7 +58,7 @@ function pickFresher(local: GameState | null, cloud: GameState | null): GameStat
 
 /** Загрузить из CloudStorage, но не дольше CLOUD_TIMEOUT_MS */
 async function loadFromCloudWithTimeout(): Promise<GameState | null> {
-  if (!tg?.CloudStorage) return null
+  if (!cloudStorageSupported) return null
 
   let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<null>((resolve) => {
@@ -71,7 +71,7 @@ async function loadFromCloudWithTimeout(): Promise<GameState | null> {
   try {
     return await Promise.race([loadFromCloud(), timeout])
   } catch {
-    // CloudStorage недоступен (например, старая версия Telegram)
+    // Сбой облака — играем с копии на устройстве
     return null
   } finally {
     clearTimeout(timer)
@@ -119,9 +119,9 @@ export function resetProgress(): void {
     localStorage.removeItem(STORAGE_KEY)
   } catch { /* ignore */ }
 
-  if (tg?.CloudStorage) {
+  if (cloudStorageSupported) {
     try {
-      tg.CloudStorage.removeItem(STORAGE_KEY)
+      tg!.CloudStorage.removeItem(STORAGE_KEY)
     } catch { /* ignore */ }
   }
 }

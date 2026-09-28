@@ -12,9 +12,18 @@ declare global {
 }
 
 interface TelegramWebApp {
+  /** Подписанные данные запуска. Пустая строка — открыто не из Telegram */
+  initData: string
+  /** Версия Bot API, которую поддерживает клиент */
+  version: string
+  platform: string
+  isVersionAtLeast(version: string): boolean
   ready(): void
   expand(): void
   close(): void
+  setHeaderColor(color: string): void
+  setBackgroundColor(color: string): void
+  disableVerticalSwipes?(): void
   isExpanded: boolean
   viewportHeight: number
   viewportStableHeight: number
@@ -59,13 +68,30 @@ interface TelegramWebApp {
   }
 }
 
-/** Telegram WebApp instance (null если открыто вне Telegram) */
-export const tg = window.Telegram?.WebApp ?? null
+/** Цвет фона игры — совпадает с --game-bg в style.css */
+const GAME_BG = '#14121a'
+
+const webApp = window.Telegram?.WebApp
+
+/**
+ * Telegram WebApp instance, или null, если игра открыта не из Telegram.
+ * Скрипт telegram-web-app.js создаёт объект и в обычном браузере (с версией 6.0),
+ * поэтому признак «мы в Telegram» — непустой initData.
+ */
+export const tg = webApp && webApp.initData ? webApp : null
+
+/** Поддерживает ли клиент Telegram нужную версию Bot API */
+function supports(version: string): boolean {
+  return !!tg && typeof tg.isVersionAtLeast === 'function' && tg.isVersionAtLeast(version)
+}
+
+/** Облачное хранилище Telegram доступно с Bot API 6.9 */
+export const cloudStorageSupported = supports('6.9')
 
 /** Инициализация TMA */
 export function initTelegram(): void {
   if (!tg) {
-    console.warn('Telegram WebApp API недоступен — запуск в режиме браузера')
+    console.info('Открыто не из Telegram — режим браузера, прогресс хранится только на устройстве')
     document.documentElement.classList.add('browser-mode')
     return
   }
@@ -73,33 +99,22 @@ export function initTelegram(): void {
   tg.ready()
   tg.expand()
 
-  // Применяем тему Telegram
-  applyTheme()
+  // Свайп вниз при чтении длинного экрана не должен закрывать игру
+  if (supports('7.7')) tg.disableVerticalSwipes?.()
+
+  // Шапка и фон Telegram — в цвет игры, чтобы не было светлой полосы сверху
+  if (supports('6.9')) tg.setHeaderColor(GAME_BG)
+  if (supports('6.1')) tg.setBackgroundColor(GAME_BG)
 }
 
-/** Применить цветовую тему Telegram к CSS-переменным */
-function applyTheme(): void {
-  if (!tg) return
-
-  const root = document.documentElement
-  const tp = tg.themeParams
-
-  if (tp.bg_color) root.style.setProperty('--tg-bg', tp.bg_color)
-  if (tp.text_color) root.style.setProperty('--tg-text', tp.text_color)
-  if (tp.hint_color) root.style.setProperty('--tg-hint', tp.hint_color)
-  if (tp.button_color) root.style.setProperty('--tg-button', tp.button_color)
-  if (tp.button_text_color) root.style.setProperty('--tg-button-text', tp.button_text_color)
-  if (tp.secondary_bg_color) root.style.setProperty('--tg-secondary-bg', tp.secondary_bg_color)
-}
-
-/** Тактильный отклик при нажатии */
+/** Тактильный отклик при переходе дальше */
 export function hapticTap(): void {
-  tg?.HapticFeedback.impactOccurred('light')
+  if (supports('6.1')) tg!.HapticFeedback.impactOccurred('light')
 }
 
 /** Тактильный отклик при выборе */
 export function hapticSelect(): void {
-  tg?.HapticFeedback.selectionChanged()
+  if (supports('6.1')) tg!.HapticFeedback.selectionChanged()
 }
 
 /** Получить имя пользователя */
@@ -109,12 +124,12 @@ export function getUserName(): string {
 
 /** Показать кнопку «Назад» */
 export function showBackButton(callback: () => void): void {
-  if (!tg) return
-  tg.BackButton.show()
-  tg.BackButton.onClick(callback)
+  if (!supports('6.1')) return
+  tg!.BackButton.show()
+  tg!.BackButton.onClick(callback)
 }
 
 /** Скрыть кнопку «Назад» */
 export function hideBackButton(): void {
-  tg?.BackButton.hide()
+  if (supports('6.1')) tg!.BackButton.hide()
 }
