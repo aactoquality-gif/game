@@ -19,7 +19,7 @@ interface AnalyticsEvent {
   event: string
   /** Клиентская метка времени */
   ts: number
-  /** Всегда "game" (будущее: ID истории в антологии) */
+  /** ID истории из каталога ("namertvo"); вне истории — пусто */
   story: string
   /** Номер эпизода (глава) */
   episode: number
@@ -47,7 +47,10 @@ const FLUSH_INTERVAL_MS = 10_000
 const MAX_BUFFER = 500
 
 let platform: Platform = 'browser'
-let episode = 1
+let story = ''
+let episode = 0
+/** Игрок сейчас в эпизоде (а не в меню) — от этого зависит, какое событие слать при сворачивании */
+let inEpisode = false
 let currentScreen = ''
 let run = 1
 let initData = ''
@@ -76,10 +79,14 @@ export function initAnalytics(opts: { platform: Platform; initData: string }): v
   flushTimer = setInterval(() => flush(false), FLUSH_INTERVAL_MS)
 
   document.addEventListener('visibilitychange', onVisibilityChange)
+  // Страховка: если WebView закрыли без смены видимости — досылаем очередь при выгрузке страницы
+  window.addEventListener('pagehide', () => flush(true))
 }
 
 /** Обновить контекст (при смене эпизода, рестарте, смене экрана) */
-export function updateContext(opts: { episode?: number; run?: number; screen?: string }): void {
+export function updateContext(opts: { story?: string; episode?: number; run?: number; screen?: string; inEpisode?: boolean }): void {
+  if (opts.story !== undefined) story = opts.story
+  if (opts.inEpisode !== undefined) inEpisode = opts.inEpisode
   if (opts.episode !== undefined) episode = opts.episode
   if (opts.run !== undefined) run = opts.run
   if (opts.screen !== undefined) currentScreen = opts.screen
@@ -92,7 +99,7 @@ export function track(event: string, data?: Record<string, unknown>): void {
   buffer.push({
     event,
     ts: Date.now(),
-    story: 'game',
+    story,
     episode,
     screen: currentScreen,
     run,
@@ -121,7 +128,7 @@ export function getScreensInRun(): number {
 
 function onVisibilityChange(): void {
   if (document.visibilityState === 'hidden') {
-    track('episode_exit', { screens_viewed: screensInRun })
+    track(inEpisode ? 'episode_exit' : 'app_hide', inEpisode ? { screens_viewed: screensInRun, reason: 'hide' } : undefined)
     flush(true)
   }
 }

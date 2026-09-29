@@ -122,14 +122,28 @@ export function getUserName(): string {
   return tg?.initDataUnsafe.user?.first_name ?? 'Путник'
 }
 
-/** Показать кнопку «Назад» */
-export function showBackButton(callback: () => void): void {
-  if (!supports('6.1')) return
-  tg!.BackButton.show()
-  tg!.BackButton.onClick(callback)
+/** Системная кнопка «Назад» в шапке Telegram доступна */
+export const nativeBackSupported = supports('6.1')
+
+let backHandler: (() => void) | null = null
+
+/**
+ * Кнопка «Назад» в шапке Telegram: показать с обработчиком или скрыть (null).
+ * Прошлый обработчик снимается — иначе клики копятся при каждой смене экрана.
+ */
+export function setNativeBack(handler: (() => void) | null): void {
+  if (!nativeBackSupported) return
+  if (backHandler) tg!.BackButton.offClick(backHandler)
+  backHandler = handler
+  if (handler) {
+    tg!.BackButton.onClick(handler)
+    tg!.BackButton.show()
+  } else {
+    tg!.BackButton.hide()
+  }
 }
 
-/** Скрыть кнопку «Назад» */
-export function hideBackButton(): void {
-  if (supports('6.1')) tg!.BackButton.hide()
+/** Лёгкий отклик на успешное действие (конец эпизода) */
+export function hapticSuccess(): void {
+  if (supports('6.1')) tg!.HapticFeedback.notificationOccurred('success')
 }

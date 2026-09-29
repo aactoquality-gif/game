@@ -275,14 +275,17 @@ function handleStats(url, res) {
   if (!checkStatsKey(url, res)) return
 
   const episode = Number(url.searchParams.get('episode')) || 1
+  const storyParam = url.searchParams.get('story') ?? ''
+  const story = /^[a-z0-9_-]{1,40}$/.test(storyParam) ? storyParam : 'namertvo'
   const fromStr = url.searchParams.get('from') ?? ''
   const from = /^\d{4}-\d{2}-\d{2}$/.test(fromStr) ? Date.parse(`${fromStr}T00:00:00+03:00`) : 0
   const excludeStr = url.searchParams.get('exclude') ?? ''
   const exclude = excludeStr.split(',').map((s) => s.trim()).filter(Boolean)
 
   const report = buildReport(loadEvents(EVENTS_FILE), {
+    story,
     episode,
-    chapter: loadChapter(DIST_DIR, episode),
+    chapter: loadChapter(DIST_DIR, episode, story),
     from,
     exclude,
   })

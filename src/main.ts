@@ -1,36 +1,47 @@
 /**
- * Game — Telegram Mini App текстовый квест
+ * Game — Telegram Mini App, визуальная новелла-антология
  * Точка входа
  */
 
 import './style.css'
 import { initTelegram, tg } from './telegram'
-import { initEngine, onScene } from './engine'
+import { initEngine, onScene, getCatalog, isFirstLaunch, nextEpisodeFor, getTextSize } from './engine'
 import { initAnalytics } from './analytics'
-import { renderScene, renderLoading, renderError } from './ui'
+import { nav, app, renderLoading, renderError } from './app'
+import { renderScene, applyTextSize } from './ui/reading'
 
 async function main(): Promise<void> {
-  // 1. Инициализируем Telegram WebApp
   initTelegram()
 
-  // 2. Аналитика — до движка: движок шлёт первые события уже при загрузке главы
+  // Аналитика — до движка: движок шлёт первые события уже при открытии эпизода
   initAnalytics({
     platform: tg ? 'telegram' : 'browser',
     initData: tg?.initData ?? '',
   })
 
-  // 3. Показываем загрузку
   renderLoading()
+  onScene((scene, sceneId) => renderScene(app, scene, sceneId, nav))
 
-  // 4. Подписываемся на смену сцен
-  onScene(renderScene)
-
-  // 5. Запускаем движок (загрузит прогресс + первую главу)
   try {
     await initEngine()
-  } catch {
+  } catch (error) {
+    console.error(error)
     renderError('Не удалось загрузить игру. Проверь подключение к интернету.')
+    return
   }
+
+  applyTextSize(getTextSize())
+
+  // Первый запуск — сразу в эпизод 1, без меню: первая минута (гипотеза H3) не должна уходить на навигацию
+  const catalog = getCatalog()
+  if (isFirstLaunch() && catalog.firstLaunch === 'story') {
+    const first = nextEpisodeFor(catalog.defaultStory)
+    if (first) {
+      nav.read(catalog.defaultStory, first.meta.n)
+      return
+    }
+  }
+  nav.toMenu()
 }
 
 main()

@@ -34,13 +34,24 @@ export function loadEvents(file) {
   return out
 }
 
-export function loadChapter(distDir, episode) {
+/** Файл эпизода — по каталогу историй; если каталога нет — старое имя ch{N}.json */
+export function loadChapter(distDir, episode, story = 'namertvo') {
+  const base = join(distDir, 'content', 'ru')
+  let file = `ch${episode}.json`
   try {
-    return JSON.parse(readFileSync(join(distDir, 'content', 'ru', `ch${episode}.json`), 'utf8'))
+    const catalog = JSON.parse(readFileSync(join(base, 'catalog.json'), 'utf8'))
+    const meta = catalog.stories?.find((s) => s.id === story)?.episodes?.find((e) => e.n === episode)
+    if (meta?.file) file = meta.file
+  } catch { /* каталога нет — берём старое имя */ }
+  try {
+    return JSON.parse(readFileSync(join(base, file), 'utf8'))
   } catch {
     return null
   }
 }
+
+/** До каталога историй все события писались с story: "game" — это «Намертво» */
+const normStory = (s) => (s === 'game' ? 'namertvo' : s)
 
 // ---------------------------------------------------------------------------
 // Расчёт
@@ -59,9 +70,9 @@ function median(values) {
  * @param {object[]} allEvents
  * @param {{ episode?: number, chapter?: object|null, from?: number, exclude?: string[] }} opts
  */
-export function buildReport(allEvents, { episode = 1, chapter = null, from = 0, exclude = [] } = {}) {
+export function buildReport(allEvents, { story = 'namertvo', episode = 1, chapter = null, from = 0, exclude = [] } = {}) {
   const events = allEvents
-    .filter((e) => e.story === 'game' && e.episode === episode && (e.server_ts ?? e.ts) >= from)
+    .filter((e) => normStory(e.story) === story && e.episode === episode && (e.server_ts ?? e.ts) >= from)
     .filter((e) => !exclude.includes(String(e.user_id)) && !exclude.includes(String(e.device)))
     .sort((a, b) => a.ts - b.ts)
 
@@ -137,6 +148,7 @@ export function buildReport(allEvents, { episode = 1, chapter = null, from = 0, 
   }
 
   return {
+    story,
     episode,
     events: events.length,
     h1,
@@ -284,7 +296,7 @@ export function renderHtml(r, meta) {
 <html lang="ru"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Г1 · эпизод ${r.episode}</title>
+<title>Г1 · ${esc(r.story)} · эпизод ${r.episode}</title>
 <style>
 :root{--bg:#fff;--fg:#1b1a1f;--muted:#8a8791;--line:#e6e4ea;--ok:#1f8a4c;--bad:#c0392b;--wait:#9a7b12;--bar:#6c5ce7}
 @media (prefers-color-scheme:dark){:root{--bg:#14121a;--fg:#ece9f1;--muted:#8d8997;--line:#2b2833;--bar:#8b7cf6}}
@@ -301,11 +313,13 @@ th{font-weight:600;font-size:12px;color:var(--muted)}td.wrap{white-space:normal;
 form{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}input{padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:transparent;color:inherit}
 a{color:var(--bar)}
 </style></head><body><main>
-<h1>Г1 · эпизод ${r.episode}</h1>
+<h1>Г1 · ${esc(r.story)} · эпизод ${r.episode}</h1>
 <div class="muted meta">${r.events} событий · проверка подписи Telegram: ${meta.verifyOn ? 'включена' : '<b>выключена (нет BOT_TOKEN)</b>'} · данные: ${esc(meta.dataDir)}</div>
 
 <form method="get">
   <input type="hidden" name="key" value="${esc(meta.key)}">
+  <input type="hidden" name="story" value="${esc(r.story)}">
+  <input type="hidden" name="episode" value="${r.episode}">
   <label>с даты <input type="date" name="from" value="${esc(meta.from)}"></label>
   <label>исключить ID <input name="exclude" value="${esc(meta.exclude)}" placeholder="через запятую"></label>
   <button type="submit">Применить</button>

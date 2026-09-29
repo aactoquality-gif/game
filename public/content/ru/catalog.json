@@ -1,0 +1,70 @@
+{
+  "firstLaunch": "story",
+  "defaultStory": "namertvo",
+  "stories": [
+    {
+      "id": "namertvo",
+      "caseNo": "01",
+      "title": "Намертво",
+      "hero": "Мастер цеха",
+      "description": "[Описание истории — 2–3 предложения, без раскрытия силы]",
+      "tags": [],
+      "tint": "#6b5a3e",
+      "status": "available",
+      "episodes": [
+        { "n": 1, "title": "Эпизод 1", "file": "ch1.json", "status": "available" },
+        { "n": 2, "title": "Эпизод 2", "status": "soon" },
+        { "n": 3, "title": "Эпизод 3", "status": "soon" },
+        { "n": 4, "title": "Эпизод 4", "status": "soon" },
+        { "n": 5, "title": "Эпизод 5", "status": "soon" },
+        { "n": 6, "title": "Эпизод 6", "status": "soon" },
+        { "n": 7, "title": "Эпизод 7", "status": "soon" },
+        { "n": 8, "title": "Эпизод 8", "status": "soon" }
+      ]
+    },
+    {
+      "id": "nachisto",
+      "caseNo": "02",
+      "title": "Начисто",
+      "hero": "Пенсионерка",
+      "description": "",
+      "tags": [],
+      "tint": "#3e5a5a",
+      "status": "soon",
+      "episodes": []
+    },
+    {
+      "id": "nasovsem",
+      "caseNo": "03",
+      "title": "Насовсем",
+      "hero": "Мать-одиночка",
+      "description": "",
+      "tags": [],
+      "tint": "#5a3e52",
+      "status": "soon",
+      "episodes": []
+    },
+    {
+      "id": "nazubok",
+      "caseNo": "04",
+      "title": "Назубок",
+      "hero": "Учительница",
+      "description": "",
+      "tags": [],
+      "tint": "#3e4a6b",
+      "status": "soon",
+      "episodes": []
+    },
+    {
+      "id": "navernyaka",
+      "caseNo": "05",
+      "title": "Наверняка",
+      "hero": "Врач-бюджетник",
+      "description": "",
+      "tags": [],
+      "tint": "#4f5a3e",
+      "status": "soon",
+      "episodes": []
+    }
+  ]
+}
