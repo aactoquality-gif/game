@@ -1,15 +1,20 @@
 /**
  * Минимальный сервер для Game TMA
  *
- * Две задачи:
- *   1. Раздавать статику из dist/ (вместо nginx)
- *   2. Принимать аналитические события (POST /api/events)
+ *   GET  /*                 — статика из dist/ (вместо nginx)
+ *   POST /api/events        — приём аналитических событий пачками
+ *   GET  /api/stats         — отчёт по гипотезам Г1 (нужен ?key=STATS_KEY)
+ *   GET  /api/events.jsonl  — сырые события (нужен ?key=STATS_KEY)
+ *   GET  /api/health        — проверка, что сервер жив
+ *
+ * Переменные окружения:
+ *   BOT_TOKEN  — токен бота; включает проверку подписи initData
+ *   STATS_KEY  — пароль к отчёту; без него отчёт выключен
+ *   DATA_DIR   — куда писать events.jsonl (на Amvera — постоянный диск /data)
+ *   PORT       — порт (по умолчанию 80)
  *
  * Валидация initData: HMAC-SHA256 по спеке Telegram
  * https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
- *
- * Хранение: JSONL-файл (одна строка — одно событие).
- * Для Г1 (до 50 тестеров) этого достаточно; к Г2 можно мигрировать на SQLite/Postgres.
  *
  * Зависимости: ноль (только Node built-in модули).
  */
@@ -17,259 +22,374 @@
 import { createServer } from 'node:http'
 import { createReadStream, existsSync, mkdirSync, appendFileSync, statSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { dirname, join, extname, resolve } from 'node:path'
-import { createHmac } from 'node:crypto'
+import { dirname, join, extname, resolve, sep } from 'node:path'
+import { createHmac, timingSafeEqual } from 'node:crypto'
+import { loadEvents, loadChapter, buildReport, renderHtml } from './stats.mjs'
 
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = dirname(__filename)
+const __dirname = dirname(fileURLToPath(import.meta.url))
 
 const PORT = Number(process.env.PORT) || 80
 const BOT_TOKEN = process.env.BOT_TOKEN || ''
+const STATS_KEY = process.env.STATS_KEY || ''
 const DIST_DIR = resolve(__dirname, '..', 'dist')
-const DATA_DIR = resolve(__dirname, '..', 'data')
+const DATA_DIR = resolve(process.env.DATA_DIR || join(__dirname, '..', 'data'))
 const EVENTS_FILE = join(DATA_DIR, 'events.jsonl')
 
-// Максимальный размер тела запроса (100 КБ)
+const VERSION = 'events-v2'
+/** Максимальный размер тела запроса */
 const MAX_BODY = 100 * 1024
+/** Максимум событий в одной пачке */
+const MAX_EVENTS = 100
+/** initData старше суток не принимаем — защита от повторной отправки чужой подписи */
+const INIT_DATA_MAX_AGE_S = 24 * 60 * 60
+/** Лимит запросов с одного IP в минуту */
+const RATE_LIMIT_PER_MIN = 120
 
 // ---------------------------------------------------------------------------
 // Подготовка
 // ---------------------------------------------------------------------------
 
-if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true })
-
-if (!BOT_TOKEN) {
-  console.warn('⚠ BOT_TOKEN не задан — валидация initData отключена, события от Telegram будут приниматься без проверки')
-}
-
-// ---------------------------------------------------------------------------
-// MIME-типы для статики
-// ---------------------------------------------------------------------------
+mkdirSync(DATA_DIR, { recursive: true })
 
 /** @type {Record<string, string>} */
 const MIME = {
   '.html': 'text/html; charset=utf-8',
-  '.css':  'text/css; charset=utf-8',
-  '.js':   'application/javascript; charset=utf-8',
-  '.mjs':  'application/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.mjs': 'application/javascript; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
-  '.svg':  'image/svg+xml',
+  '.svg': 'image/svg+xml',
   '.webp': 'image/webp',
-  '.png':  'image/png',
-  '.jpg':  'image/jpeg',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
-  '.ico':  'image/x-icon',
+  '.ico': 'image/x-icon',
   '.woff': 'font/woff',
-  '.woff2':'font/woff2',
-  '.ttf':  'font/ttf',
+  '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
 }
 
 // ---------------------------------------------------------------------------
-// Валидация Telegram initData
+// Утилиты
+// ---------------------------------------------------------------------------
+
+function safeEqual(a, b) {
+  const ba = Buffer.from(String(a))
+  const bb = Buffer.from(String(b))
+  return ba.length === bb.length && timingSafeEqual(ba, bb)
+}
+
+function sendJson(res, status, obj, extraHeaders = {}) {
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...extraHeaders })
+  res.end(JSON.stringify(obj))
+}
+
+function clientIp(req) {
+  const fwd = req.headers['x-forwarded-for']
+  return (typeof fwd === 'string' && fwd.split(',')[0].trim()) || req.socket.remoteAddress || 'unknown'
+}
+
+// ---------------------------------------------------------------------------
+// Лимит запросов (в памяти; для одной реплики достаточно)
+// ---------------------------------------------------------------------------
+
+const hits = new Map()
+
+function rateLimited(ip) {
+  const now = Date.now()
+  const h = hits.get(ip)
+  if (!h || now - h.start > 60_000) {
+    hits.set(ip, { start: now, count: 1 })
+    return false
+  }
+  h.count++
+  return h.count > RATE_LIMIT_PER_MIN
+}
+
+setInterval(() => {
+  const now = Date.now()
+  for (const [ip, h] of hits) if (now - h.start > 60_000) hits.delete(ip)
+}, 60_000).unref()
+
+// ---------------------------------------------------------------------------
+// Telegram initData
 // ---------------------------------------------------------------------------
 
 /**
- * Проверить подпись initData и вернуть объект user.
- * Возвращает null, если подпись невалидна.
- * Возвращает {} (пустой объект), если подпись ок, но user отсутствует.
+ * Разобрать initData.
+ * С BOT_TOKEN — проверить подпись и срок; при ошибке вернуть null.
+ * Без BOT_TOKEN (dev) — вернуть пользователя без проверки, verified: false.
+ * @returns {{ user: { id?: number, first_name?: string } | null, verified: boolean } | null}
  */
-function validateInitData(raw) {
-  if (!BOT_TOKEN || !raw) return null
-
+function parseInitData(raw) {
   const params = new URLSearchParams(raw)
+  let user = null
+  try {
+    const u = params.get('user')
+    if (u) user = JSON.parse(u)
+  } catch { /* ignore */ }
+
+  if (!BOT_TOKEN) return { user, verified: false }
+
   const hash = params.get('hash')
   if (!hash) return null
-
   params.delete('hash')
-  const sorted = [...params.entries()].sort(([a], [b]) => a.localeCompare(b))
-  const checkString = sorted.map(([k, v]) => `${k}=${v}`).join('\n')
+
+  const checkString = [...params.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([k, v]) => `${k}=${v}`)
+    .join('\n')
 
   const secretKey = createHmac('sha256', 'WebAppData').update(BOT_TOKEN).digest()
-  const computedHash = createHmac('sha256', secretKey).update(checkString).digest('hex')
+  const computed = createHmac('sha256', secretKey).update(checkString).digest('hex')
+  if (!safeEqual(computed, hash)) return null
 
-  if (computedHash !== hash) return null
+  const authDate = Number(params.get('auth_date'))
+  if (!authDate || Date.now() / 1000 - authDate > INIT_DATA_MAX_AGE_S) return null
 
-  try {
-    const userData = params.get('user')
-    if (userData) return JSON.parse(userData)
-  } catch { /* ignore parse errors */ }
-
-  return {}
+  return { user, verified: true }
 }
 
 // ---------------------------------------------------------------------------
-// Чтение тела запроса
+// Очистка событий: пишем только известные поля ограниченной длины
+// ---------------------------------------------------------------------------
+
+const str = (v, max) => (typeof v === 'string' && v.length <= max ? v : null)
+const int = (v) => (Number.isInteger(v) && v >= 0 && v < 1e6 ? v : null)
+
+function cleanEvent(e) {
+  if (!e || typeof e !== 'object') return null
+  const event = str(e.event, 40)
+  if (!event || !/^[a-z_]+$/.test(event)) return null
+
+  let data
+  if (e.data && typeof e.data === 'object' && !Array.isArray(e.data)) {
+    const json = JSON.stringify(e.data)
+    if (json.length <= 1024) data = e.data
+  }
+
+  return {
+    event,
+    ts: Number.isFinite(e.ts) ? e.ts : null,
+    story: str(e.story, 40),
+    episode: int(e.episode),
+    screen: str(e.screen, 64),
+    run: int(e.run),
+    platform: e.platform === 'telegram' ? 'telegram' : 'browser',
+    session: str(e.session, 40),
+    device: str(e.device, 40),
+    ...(data ? { data } : {}),
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Обработчики API
 // ---------------------------------------------------------------------------
 
 function readBody(req) {
-  return new Promise((resolve, reject) => {
+  return new Promise((resolveBody, reject) => {
     const chunks = []
     let size = 0
-
-    req.on('data', (chunk) => {
+    const onData = (chunk) => {
       size += chunk.length
       if (size > MAX_BODY) {
-        req.destroy()
+        // Дальше не копим: остаток тела сливаем в никуда, ответ 413 закроет соединение
+        req.off('data', onData)
+        req.resume()
         reject(new Error('Body too large'))
         return
       }
       chunks.push(chunk)
-    })
-
+    }
+    req.on('data', onData)
     req.on('end', () => {
       try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString()))
+        resolveBody(JSON.parse(Buffer.concat(chunks).toString()))
       } catch {
         reject(new Error('Invalid JSON'))
       }
     })
-
     req.on('error', reject)
   })
 }
 
+async function handleEvents(req, res) {
+  if (rateLimited(clientIp(req))) return sendJson(res, 429, { error: 'too many requests' })
+
+  let body
+  try {
+    body = await readBody(req)
+  } catch (err) {
+    if (err.message === 'Body too large') return sendJson(res, 413, { error: 'body too large' }, { Connection: 'close' })
+    return sendJson(res, 400, { error: 'invalid json' })
+  }
+
+  const { initData: rawInitData, events } = body ?? {}
+  if (!Array.isArray(events) || events.length === 0) return sendJson(res, 400, { error: 'no events' })
+  if (events.length > MAX_EVENTS) return sendJson(res, 400, { error: 'too many events' })
+
+  // Кто прислал. Без initData — режим браузера, игрок анонимный (различаем по device)
+  let userId = null
+  let userName = null
+  let verified = false
+  if (rawInitData) {
+    const parsed = parseInitData(String(rawInitData))
+    if (!parsed) return sendJson(res, 403, { error: 'invalid initData' })
+    userId = parsed.user?.id ?? null
+    userName = typeof parsed.user?.first_name === 'string' ? parsed.user.first_name.slice(0, 64) : null
+    verified = parsed.verified
+  }
+
+  const serverTs = Date.now()
+  const lines = []
+  for (const raw of events) {
+    const e = cleanEvent(raw)
+    if (e) lines.push(JSON.stringify({ ...e, user_id: userId, user_name: userName, verified, server_ts: serverTs }))
+  }
+  if (lines.length === 0) return sendJson(res, 400, { error: 'no valid events' })
+
+  try {
+    appendFileSync(EVENTS_FILE, lines.join('\n') + '\n')
+  } catch (err) {
+    console.error('Не удалось записать события:', err)
+    return sendJson(res, 500, { error: 'storage error' })
+  }
+
+  console.log(`[events] +${lines.length} user=${userId ?? 'anon'}${verified ? '' : ' (unverified)'}`)
+  sendJson(res, 200, { ok: true, accepted: lines.length })
+}
+
+function checkStatsKey(url, res) {
+  if (!STATS_KEY) {
+    sendJson(res, 404, { error: 'stats disabled: set STATS_KEY' })
+    return false
+  }
+  if (!safeEqual(url.searchParams.get('key') ?? '', STATS_KEY)) {
+    sendJson(res, 401, { error: 'wrong key' })
+    return false
+  }
+  return true
+}
+
+function handleStats(url, res) {
+  if (!checkStatsKey(url, res)) return
+
+  const episode = Number(url.searchParams.get('episode')) || 1
+  const fromStr = url.searchParams.get('from') ?? ''
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(fromStr) ? Date.parse(`${fromStr}T00:00:00+03:00`) : 0
+  const excludeStr = url.searchParams.get('exclude') ?? ''
+  const exclude = excludeStr.split(',').map((s) => s.trim()).filter(Boolean)
+
+  const report = buildReport(loadEvents(EVENTS_FILE), {
+    episode,
+    chapter: loadChapter(DIST_DIR, episode),
+    from,
+    exclude,
+  })
+
+  if (url.searchParams.get('format') === 'json') return sendJson(res, 200, report)
+
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'Referrer-Policy': 'no-referrer',
+    'X-Robots-Tag': 'noindex',
+  })
+  res.end(renderHtml(report, { verifyOn: !!BOT_TOKEN, dataDir: DATA_DIR, key: STATS_KEY, from: fromStr, exclude: excludeStr }))
+}
+
+function handleRawEvents(url, res) {
+  if (!checkStatsKey(url, res)) return
+  res.writeHead(200, {
+    'Content-Type': 'application/x-ndjson; charset=utf-8',
+    'Content-Disposition': 'attachment; filename="events.jsonl"',
+    'Cache-Control': 'no-store',
+  })
+  if (!existsSync(EVENTS_FILE)) return res.end()
+  createReadStream(EVENTS_FILE).pipe(res)
+}
+
 // ---------------------------------------------------------------------------
-// HTTP-сервер
+// Статика
+// ---------------------------------------------------------------------------
+
+function serveStatic(req, res, pathname) {
+  let decoded
+  try {
+    decoded = decodeURIComponent(pathname)
+  } catch {
+    res.writeHead(400)
+    return res.end()
+  }
+  let filePath = resolve(DIST_DIR, '.' + decoded)
+
+  // Защита от выхода за пределы dist/
+  if (filePath !== DIST_DIR && !filePath.startsWith(DIST_DIR + sep)) {
+    res.writeHead(403)
+    return res.end()
+  }
+
+  try {
+    if (existsSync(filePath) && statSync(filePath).isDirectory()) filePath = join(filePath, 'index.html')
+  } catch { /* ignore */ }
+
+  // SPA fallback: файла нет и у пути нет расширения — отдаём index.html
+  if (!existsSync(filePath)) {
+    if (extname(filePath)) {
+      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
+      return res.end('Not found')
+    }
+    filePath = join(DIST_DIR, 'index.html')
+  }
+
+  const ext = extname(filePath)
+  // Хешированные ассеты Vite — навечно, остальное (index.html, главы) — сверяться с сервером
+  const isHashed = filePath.includes(`${sep}assets${sep}`)
+
+  res.writeHead(200, {
+    'Content-Type': MIME[ext] || 'application/octet-stream',
+    'Cache-Control': isHashed ? 'public, max-age=31536000, immutable' : 'no-cache',
+    'X-Content-Type-Options': 'nosniff',
+  })
+  if (req.method === 'HEAD') return res.end()
+  createReadStream(filePath).pipe(res)
+}
+
+// ---------------------------------------------------------------------------
+// Роутинг
 // ---------------------------------------------------------------------------
 
 const server = createServer(async (req, res) => {
-  // ── API: приём событий ──────────────────────────────────────────────
-  if (req.method === 'POST' && req.url === '/api/events') {
-    try {
-      const body = await readBody(req)
-      const { initData: rawInitData, events } = body
-
-      if (!Array.isArray(events) || events.length === 0) {
-        res.writeHead(400, { 'Content-Type': 'application/json' })
-        res.end('{"error":"no events"}')
-        return
-      }
-
-      if (events.length > 100) {
-        res.writeHead(400, { 'Content-Type': 'application/json' })
-        res.end('{"error":"too many events"}')
-        return
-      }
-
-      // Определить user_id
-      let userId = null
-      if (rawInitData) {
-        if (BOT_TOKEN) {
-          const user = validateInitData(rawInitData)
-          if (user === null) {
-            res.writeHead(403, { 'Content-Type': 'application/json' })
-            res.end('{"error":"invalid initData"}')
-            return
-          }
-          userId = user.id ?? null
-        }
-        // Если BOT_TOKEN не задан — принимаем без проверки (dev-режим)
-      }
-
-      // Записать в JSONL
-      const serverTs = Date.now()
-      const lines = events
-        .map((e) =>
-          JSON.stringify({
-            ...e,
-            user_id: userId,
-            server_ts: serverTs,
-          }),
-        )
-        .join('\n')
-
-      appendFileSync(EVENTS_FILE, lines + '\n')
-
-      // Дублировать в stdout для логов контейнера
-      console.log(`[events] +${events.length} from user=${userId ?? 'anon'}`)
-
-      res.writeHead(200, { 'Content-Type': 'application/json' })
-      res.end('{"ok":true}')
-    } catch (err) {
-      if (err.message === 'Body too large') {
-        res.writeHead(413, { 'Content-Type': 'application/json' })
-        res.end('{"error":"body too large"}')
-        return
-      }
-      if (err.message === 'Invalid JSON') {
-        res.writeHead(400, { 'Content-Type': 'application/json' })
-        res.end('{"error":"invalid json"}')
-        return
-      }
-      console.error('Events API error:', err)
-      res.writeHead(500, { 'Content-Type': 'application/json' })
-      res.end('{"error":"server error"}')
-    }
-    return
-  }
-
-  // ── Статика ─────────────────────────────────────────────────────────
-  if (req.method !== 'GET' && req.method !== 'HEAD') {
-    res.writeHead(405)
-    res.end()
-    return
-  }
-
-  // Разбираем URL (убираем query string)
-  let pathname
+  let url
   try {
-    pathname = new URL(req.url, 'http://localhost').pathname
+    url = new URL(req.url, 'http://localhost')
   } catch {
     res.writeHead(400)
-    res.end()
-    return
+    return res.end()
   }
+  const { pathname } = url
 
-  // Определяем путь к файлу
-  let filePath = resolve(DIST_DIR, '.' + pathname)
-
-  // Защита от directory traversal
-  if (!filePath.startsWith(DIST_DIR)) {
-    res.writeHead(403)
-    res.end()
-    return
-  }
-
-  // Если это каталог — ищем index.html внутри
   try {
-    if (existsSync(filePath) && statSync(filePath).isDirectory()) {
-      filePath = join(filePath, 'index.html')
+    if (pathname === '/api/events' && req.method === 'POST') return await handleEvents(req, res)
+    if (pathname === '/api/health' && req.method === 'GET') return sendJson(res, 200, { ok: true, version: VERSION })
+    if (pathname === '/api/stats' && req.method === 'GET') return handleStats(url, res)
+    if (pathname === '/api/events.jsonl' && req.method === 'GET') return handleRawEvents(url, res)
+    if (pathname.startsWith('/api/')) return sendJson(res, 404, { error: 'not found' })
+
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.writeHead(405)
+      return res.end()
     }
-  } catch { /* ignore */ }
-
-  // SPA fallback: если файл не найден и нет расширения — отдаём index.html
-  if (!existsSync(filePath)) {
-    if (!extname(filePath)) {
-      filePath = join(DIST_DIR, 'index.html')
-    } else {
-      res.writeHead(404)
-      res.end('Not found')
-      return
-    }
+    serveStatic(req, res, pathname)
+  } catch (err) {
+    console.error('Server error:', err)
+    if (!res.headersSent) sendJson(res, 500, { error: 'server error' })
+    else res.end()
   }
-
-  // Content-Type
-  const ext = extname(filePath)
-  const contentType = MIME[ext] || 'application/octet-stream'
-
-  // Cache-Control: хешированные ассеты — навечно, остальное — no-cache
-  const isHashed = filePath.includes('/assets/') || /\.[a-f0-9]{8}\./i.test(filePath)
-  const cacheControl = isHashed ? 'public, max-age=31536000, immutable' : 'no-cache'
-
-  res.writeHead(200, {
-    'Content-Type': contentType,
-    'Cache-Control': cacheControl,
-  })
-
-  if (req.method === 'HEAD') {
-    res.end()
-    return
-  }
-
-  createReadStream(filePath).pipe(res)
 })
 
 server.listen(PORT, () => {
-  console.log(`Game server on :${PORT}  dist=${DIST_DIR}  data=${DATA_DIR}`)
-  if (!BOT_TOKEN) console.log('  ⚠ BOT_TOKEN not set — initData validation disabled')
+  console.log(`Game server ${VERSION} on :${PORT}  dist=${DIST_DIR}  data=${DATA_DIR}`)
+  if (!BOT_TOKEN) console.warn('  ⚠ BOT_TOKEN не задан — подпись initData не проверяется')
+  if (!STATS_KEY) console.warn('  ⚠ STATS_KEY не задан — /api/stats выключен')
 })

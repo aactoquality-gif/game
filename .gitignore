@@ -26,3 +26,6 @@ dist-ssr
 
 # Batch scripts (utility, not part of project)
 *.bat
+
+# Analytics events (local dev)
+/data

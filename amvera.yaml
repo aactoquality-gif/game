@@ -8,4 +8,6 @@ build:
   dockerfile: Dockerfile
 
 run:
+  # Постоянный диск: переживает передеплой. Сервер пишет сюда events.jsonl
+  persistenceMount: /data
   containerPort: 80

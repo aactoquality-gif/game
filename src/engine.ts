@@ -44,13 +44,16 @@ async function loadChapter(num: number): Promise<void> {
     currentChapter = await response.json() as Chapter
 
     // Если нет сохранённого экрана (или глава изменилась) — начать с начала главы
-    if (!currentState.sceneId || !currentChapter.scenes[currentState.sceneId]) {
+    const resumed = !!currentState.sceneId && !!currentChapter.scenes[currentState.sceneId]
+    if (!resumed) {
       currentState.sceneId = currentChapter.startScene
     }
 
-    // Аналитика: обновить контекст и отправить episode_start
+    // Аналитика (как EpisodeStarted / EpisodeEnter в 7H):
+    // episode_enter — каждое открытие; episode_start — только настоящий старт с первого экрана
     updateContext({ episode: num, run: currentState.run })
-    track('episode_start')
+    track('episode_enter', { resumed })
+    if (!resumed) track('episode_start')
 
     navigateTo(currentState.sceneId)
   } catch (error) {
