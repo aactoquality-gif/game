@@ -4,8 +4,9 @@
  */
 
 import './style.css'
-import { initTelegram } from './telegram'
-import { initEngine, onScene } from './engine'
+import { initTelegram, tg } from './telegram'
+import { initEngine, onScene, getState } from './engine'
+import { initAnalytics } from './analytics'
 import { renderScene, renderLoading, renderError } from './ui'
 
 async function main(): Promise<void> {
@@ -23,7 +24,17 @@ async function main(): Promise<void> {
     await initEngine()
   } catch {
     renderError('Не удалось загрузить игру. Проверь подключение к интернету.')
+    return
   }
+
+  // 5. Инициализируем аналитику после движка (чтобы знать episode и run)
+  const state = getState()
+  initAnalytics({
+    platform: tg ? 'telegram' : 'browser',
+    episode: state.chapter,
+    run: state.run,
+    initData: tg?.initData ?? '',
+  })
 }
 
 main()

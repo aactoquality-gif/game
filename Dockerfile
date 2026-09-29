@@ -1,13 +1,15 @@
-# Этап 1: сборка
-FROM node:18-alpine AS build
+# Этап 1: сборка фронтенда
+FROM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
 RUN npm run build
 
-# Этап 2: раздача через nginx
-FROM nginx:alpine
-COPY --from=build /app/dist /usr/share/nginx/html
+# Этап 2: Node-сервер (статика + API аналитики)
+FROM node:22-alpine
+WORKDIR /app
+COPY --from=build /app/dist ./dist/
+COPY server/ ./server/
 EXPOSE 80
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["node", "server/index.mjs"]

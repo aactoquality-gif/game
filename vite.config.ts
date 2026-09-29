@@ -6,4 +6,9 @@ export default defineConfig({
     outDir: 'dist',
     target: 'es2020',
   },
+  server: {
+    proxy: {
+      '/api': 'http://localhost:3000',
+    },
+  },
 })

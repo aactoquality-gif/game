@@ -4,10 +4,11 @@
 
 import type { Chapter, Scene, GameState } from './types'
 import { saveProgress, loadProgress } from './storage'
+import { track, updateContext, resetRunCounters, getScreensInRun } from './analytics'
 
 /** Чистое состояние для начала главы */
 function freshState(chapter = 1): GameState {
-  return { chapter, sceneId: '', flags: {}, counters: {}, picks: [], savedAt: 0 }
+  return { chapter, sceneId: '', flags: {}, counters: {}, picks: [], run: 1, savedAt: 0 }
 }
 
 /** Текущее состояние игры */
@@ -28,7 +29,7 @@ export function onScene(callback: SceneChangeCallback): void {
 export async function initEngine(): Promise<void> {
   const saved = await loadProgress()
 
-  // Старые сохранения могут не содержать новых полей (counters, picks) — дополняем
+  // Старые сохранения могут не содержать новых полей (counters, picks, run) — дополняем
   currentState = saved ? { ...freshState(saved.chapter || 1), ...saved } : freshState()
 
   await loadChapter(currentState.chapter)
@@ -46,6 +47,10 @@ async function loadChapter(num: number): Promise<void> {
     if (!currentState.sceneId || !currentChapter.scenes[currentState.sceneId]) {
       currentState.sceneId = currentChapter.startScene
     }
+
+    // Аналитика: обновить контекст и отправить episode_start
+    updateContext({ episode: num, run: currentState.run })
+    track('episode_start')
 
     navigateTo(currentState.sceneId)
   } catch (error) {
@@ -66,6 +71,16 @@ export function navigateTo(sceneId: string): void {
 
   currentState.sceneId = sceneId
   saveProgress(currentState)
+
+  // Аналитика: обновить текущий экран и отправить screen_view
+  const kind = scene.kind ?? 'text'
+  updateContext({ screen: sceneId })
+  track('screen_view', { kind })
+
+  // Если экран — конец эпизода, отправить episode_complete
+  if (kind === 'end') {
+    track('episode_complete', { screens_viewed: getScreensInRun() })
+  }
 
   onSceneChange?.(scene, sceneId)
 }
@@ -99,13 +114,29 @@ export function makeChoice(choiceIndex: number): void {
   }
   currentState.picks = [...currentState.picks, choice.id]
 
+  // Аналитика: отправить choice_made перед переходом
+  track('choice_made', {
+    choice_id: choice.id,
+    choice_type: choice.type ?? 'neutral',
+    ...(choice.effects ? { effects: choice.effects } : {}),
+  })
+
   navigateTo(choice.next)
 }
 
 /** Начать текущую главу заново (сбрасывает выборы и счётчики) */
 export function restartChapter(): void {
   if (!currentChapter) return
+
+  const nextRun = (currentState.run ?? 1) + 1
   currentState = freshState(currentState.chapter)
+  currentState.run = nextRun
+
+  // Аналитика: обновить run, сбросить счётчики экранов, отправить episode_start
+  updateContext({ run: nextRun })
+  resetRunCounters()
+  track('episode_start')
+
   navigateTo(currentChapter.startScene)
 }
 

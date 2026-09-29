@@ -73,6 +73,8 @@ export interface GameState {
   counters: Record<string, number>
   /** ID сделанных выборов по порядку */
   picks: string[]
+  /** Номер прохождения эпизода (1 = первый раз, +1 при рестарте) */
+  run: number
   /** Временная метка последнего сохранения */
   savedAt: number
 }
