@@ -1,0 +1,257 @@
+/* ==========================================================================
+   Каркас приложения — Шаг 1.1
+   Три изолированные зоны по вертикали: хедер / контент / таббар.
+   Экран зафиксирован: документ не прокручивается, скроллится только .app-content.
+   Mobile-first: база — самый узкий телефон, дальше расширяем через min-width.
+   Цвета, --gap, --top, --safe-bottom — из style.css.
+   ========================================================================== */
+
+:root {
+  /* Высоты зон (без safe area — она добавляется сверху/снизу отдельно) */
+  --header-h: 52px;
+  --tabbar-h: 56px;
+
+  /* Заглушка «Аккаунт»: на телефоне — место под аватар, с 600 px — аватар + имя/баланс */
+  --account-w: 36px;
+  --account-h: 36px;
+
+  /* Ширины */
+  --shell-max: 100%;           /* каркас целиком */
+  --content-max: 640px;        /* колонка контента внутри зоны */
+  --shell-pad-x: 12px;
+
+  /* Боковые safe area — телефон боком с «чёлкой» */
+  --safe-left: max(env(safe-area-inset-left, 0px), var(--tg-safe-area-inset-left, 0px));
+  --safe-right: max(env(safe-area-inset-right, 0px), var(--tg-safe-area-inset-right, 0px));
+
+  /* Имя брейкпоинта — для бейджа в режиме проверки и для JS */
+  --bp: 'xs · <360';
+  --account-label: 'Акк';
+}
+
+/* === Брейкпоинты ==========================================================
+   xs   < 360      — компактные телефоны (iPhone SE 1, бюджетные Android)
+   sm   360–599    — обычный телефон, основной сценарий Telegram
+   md   600–1023   — планшет, Telegram Desktop, широкое окно
+   lg   ≥ 1024     — десктоп-браузер (режим браузера): каркас не растягивается
+   land h ≤ 500    — телефон боком: зоны ужимаются, контенту остаётся высота
+   ========================================================================== */
+
+@media (min-width: 360px) {
+  :root {
+    --header-h: 56px;
+    --account-w: 40px;
+    --account-h: 40px;
+    --shell-pad-x: 16px;
+    --bp: 'sm · 360–599';
+  }
+}
+
+@media (min-width: 600px) {
+  :root {
+    --header-h: 64px;
+    --tabbar-h: 64px;
+    --account-w: 176px;
+    --account-h: 44px;
+    --content-max: 720px;
+    --shell-pad-x: 24px;
+    --bp: 'md · 600–1023';
+    --account-label: 'Аккаунт';
+  }
+}
+
+@media (min-width: 1024px) {
+  :root {
+    --shell-max: 960px;
+    --bp: 'lg · ≥1024';
+  }
+  body { background: #0d0b11; }
+  .app-shell { box-shadow: 1px 0 0 var(--line), -1px 0 0 var(--line); }
+}
+
+@media (orientation: landscape) and (max-height: 500px) {
+  :root {
+    --header-h: 44px;
+    --tabbar-h: 48px;
+    --account-h: 32px;
+    --bp: 'landscape · h≤500';
+  }
+}
+
+/* === Каркас =============================================================== */
+
+/* Документ не «пружинит» и не тянется pull-to-refresh — двигается только контент */
+html, body { overscroll-behavior: none; }
+
+.app-shell {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;   /* minmax(0) — длинный контент не выдавит таббар */
+  grid-template-columns: minmax(0, 1fr);          /* длинная строка в хедере не раздует ширину каркаса */
+  grid-template-areas:
+    'header'
+    'content'
+    'tabbar';
+  max-width: var(--shell-max);
+  margin-inline: auto;
+  overflow: hidden;
+  background: var(--bg);
+  touch-action: manipulation;                     /* без задержки двойного тапа */
+}
+
+/* --- Хедер: фиксированная высота + отступ под «чёлку» / кнопки Telegram в fullscreen --- */
+.app-header {
+  grid-area: header;
+  position: relative;
+  z-index: 2;
+  padding-top: var(--top);
+  background: var(--bg);
+  box-shadow: 0 1px 0 var(--line);                /* разделитель без влияния на высоту */
+}
+
+.app-header__inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: var(--header-h);
+  max-width: var(--content-max);                  /* та же колонка, что у контента и таббара */
+  margin-inline: auto;
+  padding-inline: max(var(--shell-pad-x), var(--safe-left)) max(var(--shell-pad-x), var(--safe-right));
+}
+
+.app-header__main {
+  flex: 1 1 auto;
+  min-width: 0;                                   /* длинный заголовок обрезается, а не выдавливает «Аккаунт» */
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Пустой контейнер под будущий блок «Аккаунт» — размер держит сам, контент придёт позже */
+.app-header__account {
+  flex: none;
+  width: var(--account-w);
+  height: var(--account-h);
+  border-radius: calc(var(--account-h) / 2);
+}
+
+/* --- Контент: единственная прокручиваемая зона --- */
+.app-content {
+  grid-area: content;
+  position: relative;                             /* экраны с position:absolute (.screen) заполняют зону, а не весь экран */
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;                   /* доскролл до края не передаётся документу */
+  -webkit-overflow-scrolling: touch;
+  outline: none;
+}
+
+/* Хедер и таббар уже забрали отступы под «чёлку» и home bar —
+   экраны внутри контента видят нули и не удваивают отступ */
+.app-shell[data-chrome='full'] > .app-content {
+  --top: 0px;
+  --safe-bottom: 0px;
+}
+
+/* Колонка страницы: ограничение ширины + боковые safe area */
+.app-page {
+  max-width: var(--content-max);
+  margin-inline: auto;
+  padding:
+    16px
+    max(var(--shell-pad-x), var(--safe-right))
+    calc(24px + var(--safe-bottom))
+    max(var(--shell-pad-x), var(--safe-left));
+}
+
+/* --- Таббар: фиксированная высота, прижат к низу, + отступ под home bar --- */
+.app-tabbar {
+  grid-area: tabbar;
+  position: relative;
+  z-index: 2;
+  padding-bottom: var(--safe-bottom);
+  background: var(--surface);
+  box-shadow: 0 -1px 0 var(--line);
+}
+
+.app-tabbar__inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--tabbar-h);
+  max-width: var(--content-max);
+  margin-inline: auto;
+  padding-inline: max(var(--shell-pad-x), var(--safe-left)) max(var(--shell-pad-x), var(--safe-right));
+}
+
+/* --- Режим чтения: хедер и таббар убираются, контент — на весь экран --- */
+.app-shell[data-chrome='immersive'] > .app-header,
+.app-shell[data-chrome='immersive'] > .app-tabbar {
+  display: none;
+}
+
+/* ==========================================================================
+   Режим проверки сетки (data-debug) — включается только в layout.html
+   ========================================================================== */
+
+.app-shell[data-debug] > .app-header { background: rgba(94, 142, 214, 0.16); }
+.app-shell[data-debug] > .app-content { background: rgba(143, 191, 143, 0.07); }
+.app-shell[data-debug] > .app-tabbar { background: rgba(214, 142, 94, 0.18); }
+
+.app-shell[data-debug] .app-header__inner,
+.app-shell[data-debug] .app-tabbar__inner {
+  outline: 1px dashed rgba(236, 230, 220, 0.35);
+  outline-offset: -1px;
+}
+
+.app-shell[data-debug] .app-header__account {
+  display: grid;
+  place-items: center;
+  outline: 1px dashed var(--brass);
+  outline-offset: -1px;
+  font: 500 10px/1 var(--font-mono);
+  letter-spacing: 0.04em;
+  color: var(--brass);
+}
+.app-shell[data-debug] .app-header__account::before { content: var(--account-label); }
+
+/* Бейдж текущего брейкпоинта — над таббаром */
+.app-shell[data-debug]::after {
+  content: var(--bp);
+  position: absolute;
+  right: max(8px, var(--safe-right));
+  bottom: calc(var(--tabbar-h) + var(--safe-bottom) + 8px);
+  z-index: 3;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--brass);
+  color: var(--brass-ink);
+  font: 600 11px/1.2 var(--font-mono);
+  pointer-events: none;
+}
+.app-shell[data-debug][data-chrome='immersive']::after { bottom: calc(var(--safe-bottom) + 8px); }
+
+.shell-placeholder {
+  font: 600 14px/1.2 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.shell-readout {
+  margin-top: 8px;
+  font: 12px/1.6 var(--font-mono);
+  color: var(--text-2);
+  white-space: pre-line;
+}
+
+.shell-toggle { margin: 16px 0 8px; }
+
+.shell-filler {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+  color: var(--muted);
+}
