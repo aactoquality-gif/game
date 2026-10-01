@@ -51,6 +51,7 @@ function continueCard(nav: Nav): HTMLElement | null {
     ],
     () => nav.read(storyId, next.meta.n),
     { 'aria-label': t('menu.continueAria', { story: story.title, episode: next.meta.title }) },
+    { target: 'menu.continue', value: storyId },
   )
   return card
 }
@@ -83,6 +84,7 @@ function folderCard(story: StoryMeta, nav: Nav): HTMLElement {
     ],
     () => (available ? nav.toStory(story.id) : toast(t('menu.storyInDevToast', { story: story.title }))),
     { style: `--tint:${story.tint}`, 'aria-label': `${story.title}, ${story.hero}. ${meta}` },
+    { target: available ? 'menu.folder' : 'menu.folderSoon', value: story.id },
   )
 }
 

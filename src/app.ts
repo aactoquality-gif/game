@@ -79,7 +79,7 @@ export function renderLoading(): void {
 
 export function renderError(message: string, retry: () => void = () => location.reload()): void {
   app.replaceChildren(
-    h('div', { class: 'error' }, [h('p', { text: message }), button('btn btn--secondary', t('common.retry'), retry)]),
+    h('div', { class: 'error' }, [h('p', { text: message }), button('btn btn--secondary', t('common.retry'), retry, {}, { target: 'error.retry' })]),
   )
 }
 

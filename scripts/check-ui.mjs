@@ -42,6 +42,18 @@ const FULL_RUN = '390'
 const ONLY = process.env.CHECK_ONLY ? process.env.CHECK_ONLY.split(',').map((s) => s.trim()) : null
 
 const MODE_LABEL = { browser: 'браузер', telegram: 'Telegram' }
+/** Правило имени события на сервере (server/index.mjs, cleanEvent): иначе событие выбрасывается молча */
+const SERVER_EVENT_NAME = /^[a-z_]{1,40}$/
+
+/** Списки из каталога src/tracking.ts: EVENT_NAMES и UI_TARGETS */
+function readCatalog(name) {
+  const code = readFileSync(resolve('src/tracking.ts'), 'utf8')
+  const block = code.match(new RegExp(`export const ${name} = \\[([\\s\\S]*?)\\] as const`))
+  if (!block) return []
+  return [...block[1].replace(/\/\/.*$/gm, '').matchAll(/'([^']+)'/g)].map((m) => m[1])
+}
+const EVENT_NAMES = readCatalog('EVENT_NAMES')
+const UI_TARGETS = readCatalog('UI_TARGETS')
 const REQUIRED_EVENTS = ['episode_enter', 'episode_start', 'screen_view', 'choice_made', 'story_view', 'menu_view']
 const TG_CALLS = ['ready', 'expand', 'disableVerticalSwipes', 'setHeaderColor', 'setBackgroundColor', 'CloudStorage.setItem']
 
@@ -215,6 +227,13 @@ function auditLayout({ minTap, safeBottom, zSelectors }) {
     if (r.left < -1 || r.right > vw + 1) cutOff.push(label(el))
   }
 
+  // У каждой видимой кнопки есть цель аналитики (data-track ставит button() с параметром tap)
+  const untracked = []
+  for (const el of document.querySelectorAll('button:not([disabled]), [role="button"]')) {
+    if (!visible(el) || el.closest('[aria-hidden="true"]')) continue
+    if (!el.dataset.track) untracked.push(label(el))
+  }
+
   // Под home bar не должно уходить ничего из экрана чтения (прокручиваемые экраны — не в счёт)
   const underHomeBar = []
   if (safeBottom > 0) {
@@ -235,6 +254,7 @@ function auditLayout({ minTap, safeBottom, zSelectors }) {
   const placeholders = [...new Set(document.body.innerText.match(/\{[A-Za-z_]+\}/g) ?? [])]
 
   return {
+    untracked: [...new Set(untracked)],
     placeholders,
     zIndex,
     hScroll: doc.scrollWidth > vw + 1,
@@ -376,6 +396,16 @@ async function runCase(browser, baseUrl, apiLog, vp, mode) {
     return replaced
   }
   const back = () => (mode === 'telegram' ? page.evaluate(() => window.__check.pressBack()) : page.keyboard.press('Escape'))
+  /** Досылаем очередь аналитики и ищем нажатие с нужной целью и историей */
+  const expectTap = async (target) => {
+    await page.evaluate(() => window.dispatchEvent(new Event('pagehide')))
+    await page.waitForTimeout(400)
+    const tap = apiLog
+      .filter((p) => p.caseId === id)
+      .flatMap((p) => p.events ?? [])
+      .find((e) => e.event === 'ui_tap' && e.data?.target === target)
+    expect(!!tap && typeof tap.data.value === 'string' && tap.data.value.length > 0, `аналитика: нажатие ${target} с историей в value`)
+  }
 
   const audit = async (name) => {
     const m = await page.evaluate(auditLayout, { minTap: MIN_TAP, safeBottom, zSelectors: Object.keys(Z_EXPECTED) })
@@ -384,6 +414,7 @@ async function runCase(browser, baseUrl, apiLog, vp, mode) {
     expect(m.cutOff.length === 0, `${name}: кнопки и блоки текста не обрезаны краем экрана${m.cutOff.length ? ` — ${m.cutOff.join(', ')}` : ''}`)
     if (m.smallTargets.length) warn(`${name}: зона касания меньше ${MIN_TAP} px — ${m.smallTargets.join('; ')}`)
     if (m.underHomeBar.length) warn(`${name}: уходит под home bar (${SAFE_BOTTOM} px) — ${m.underHomeBar.join(', ')}`)
+    expect(m.untracked.length === 0, `${name}: у каждой кнопки есть цель аналитики${m.untracked.length ? ` — нет у ${m.untracked.join(', ')}` : ''}`)
     expect(m.placeholders.length === 0, `${name}: в текстах нет незаполненных подстановок${m.placeholders.length ? ` — ${m.placeholders.join(', ')}` : ''}`)
     for (const [sel, z] of Object.entries(m.zIndex)) expect(z === Z_EXPECTED[sel], `${name}: слой ${sel} = ${Z_EXPECTED[sel]} (токен z-index разрешился, сейчас ${z})`)
     const file = `${id}-${name}.png`
@@ -480,6 +511,14 @@ async function runCase(browser, baseUrl, apiLog, vp, mode) {
     const events = payloads.flatMap((p) => p.events ?? [])
     const names = new Set(events.map((e) => e.event))
     for (const need of REQUIRED_EVENTS) expect(names.has(need), `аналитика: ${need}`)
+    const badNames = [...names].filter((n) => !SERVER_EVENT_NAME.test(n) || !EVENT_NAMES.includes(n))
+    expect(badNames.length === 0, `аналитика: все имена событий из каталога и проходят фильтр сервера${badNames.length ? ` — нет: ${badNames.join(', ')}` : ''}`)
+    const taps = events.filter((e) => e.event === 'ui_tap')
+    const tapTargets = new Set(taps.map((e) => e.data?.target))
+    expect(tapTargets.has('reading.pause'), 'аналитика: нажатие на меню паузы (ui_tap reading.pause)')
+    expect(!tapTargets.has('reading.choice'), 'аналитика: выбор пишется только choice_made, без дубля ui_tap')
+    const unknownTargets = [...tapTargets].filter((x) => !UI_TARGETS.includes(x))
+    expect(unknownTargets.length === 0, `аналитика: цели нажатий только из каталога${unknownTargets.length ? ` — чужие: ${unknownTargets.join(', ')}` : ''}`)
     if (full) expect(names.has('episode_complete'), 'аналитика: episode_complete')
     const platforms = [...new Set(events.map((e) => e.platform))]
     expect(platforms.length === 1 && platforms[0] === mode, `аналитика: платформа во всех событиях — ${mode} (есть: ${platforms.join(', ') || 'нет событий'})`)
@@ -500,12 +539,14 @@ async function runCase(browser, baseUrl, apiLog, vp, mode) {
       await page.locator('.folder:not(.folder--soon)').first().click()
       await waitFor((x) => x.screen === 'story', 'экран истории после перезапуска')
       expect((await page.locator('.episode__status--ok').count()) >= 1, 'после перезапуска эпизод 1 отмечен «Прочитан»')
+      await expectTap('menu.folder')
     } else {
       expect((await page.locator('.continue-card').count()) === 1, 'после перезапуска карточка «Продолжить» на месте')
       await page.waitForTimeout(250)
       await page.locator('.continue-card').click()
       s = await waitFor((x) => ['text', 'push', 'choice'].includes(x.screen), 'возврат в эпизод')
       expect(s.screen === lastScreen && s.text === lastText, '«Продолжить» возвращает на тот же экран')
+      await expectTap('menu.continue')
     }
   } catch (error) {
     fail(`сценарий прерван: ${error.message.split('\n')[0]}`)
@@ -769,6 +810,10 @@ async function main() {
   const global = { errors: [], bundleKb: bundleSize() }
   if (global.bundleKb > BUDGET_KB) global.errors.push(`бюджет сборки превышен: ${global.bundleKb} КБ gzip > ${BUDGET_KB}`)
   for (const hit of hardcodedUiStrings()) global.errors.push(`строка интерфейса мимо t(): ${hit}`)
+  if (!EVENT_NAMES.length || !UI_TARGETS.length) global.errors.push('каталог событий src/tracking.ts не прочитан')
+  for (const n of EVENT_NAMES.filter((x) => !SERVER_EVENT_NAME.test(x))) global.errors.push(`имя события «${n}» сервер отбросит: только a-z и _, до 40 символов`)
+  const dupTargets = UI_TARGETS.filter((x, i) => UI_TARGETS.indexOf(x) !== i)
+  if (dupTargets.length) global.errors.push(`цели нажатий повторяются: ${dupTargets.join(', ')}`)
 
   // /api отвечает заглушка: события копятся здесь, прокси на локальный сервер не нужен.
   // Так проверяется настоящий путь отправки, включая sendBeacon при сворачивании.

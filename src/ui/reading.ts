@@ -85,7 +85,7 @@ export function renderScene(root: HTMLElement, scene: Scene, _sceneId: string, n
 
 function hud(nav: Nav): HTMLElement {
   return h('div', { class: 'hud' }, [
-    button('icon-btn icon-btn--glass', [icon('menu')], () => openPauseMenu(nav), { 'aria-label': t('common.menu') }),
+    button('icon-btn icon-btn--glass', [icon('menu')], () => openPauseMenu(nav), { 'aria-label': t('common.menu') }, { target: 'reading.pause' }),
   ])
 }
 
@@ -102,18 +102,20 @@ function openPauseMenu(nav: Nav): void {
       pct: p?.pct ?? 0,
     }),
     actions: [
-      { label: t('reading.continueReading'), icon: 'play', variant: 'primary', onClick: () => closeTopOverlay() },
-      { label: t('common.toStory'), icon: 'book', onClick: () => nav.toStory(info.storyId) },
+      { label: t('reading.continueReading'), icon: 'play', variant: 'primary', onClick: () => closeTopOverlay(), tap: { target: 'pause.continue' } },
+      { label: t('common.toStory'), icon: 'book', onClick: () => nav.toStory(info.storyId), tap: { target: 'pause.toStory' } },
       {
         label: t('common.restartEpisode'),
         icon: 'restart',
         variant: 'danger',
+        tap: { target: 'pause.restart' },
         onClick: () =>
           confirmDialog({
             title: t('reading.restartTitle'),
             text: t('reading.restartText'),
             confirm: t('reading.restartConfirm'),
             danger: true,
+            tap: 'dialog.restart',
             onConfirm: () => {
               closeTopOverlay() // шторка паузы
               restartEpisode()
@@ -145,6 +147,7 @@ function textSizeControl(): HTMLElement {
             render()
           },
           { role: 'radio', 'aria-checked': String(size === currentSize) },
+          { target: 'pause.textSize', value: size },
         ),
       ),
     )
@@ -247,6 +250,8 @@ function choiceButton(choice: Choice, onClick: () => void): HTMLButtonElement {
       premium ? h('span', { class: 'choice__price' }, [icon('star', 'icon icon--sm'), h('span', { text: String(choice.price) })]) : null,
     ],
     onClick,
+    {},
+    { target: 'reading.choice', value: choice.id, silent: true }, // пишет choice_made
   )
   b.dataset.type = choice.type ?? 'neutral'
   return b
@@ -304,16 +309,28 @@ function renderEnd(stage: HTMLElement, scene: Scene, nav: Nav): void {
         : null,
       h('div', { class: 'end-card__actions' }, [
         nextReady
-          ? button('btn btn--primary btn--block btn--lg', [icon('play'), h('span', { text: t('reading.endReadNext', { episode: nextMeta!.title }) })], () =>
-              nav.read(info.storyId, nextMeta!.n),
+          ? button(
+              'btn btn--primary btn--block btn--lg',
+              [icon('play'), h('span', { text: t('reading.endReadNext', { episode: nextMeta!.title }) })],
+              () => nav.read(info.storyId, nextMeta!.n),
+              {},
+              { target: 'end.readNext', value: nextMeta!.n },
             )
-          : button('btn btn--primary btn--block btn--lg', [icon('book'), h('span', { text: t('common.toStory') })], () => nav.toStory(info.storyId)),
-        nextReady ? button('btn btn--secondary btn--block', t('common.toStory'), () => nav.toStory(info.storyId)) : null,
-        button('btn btn--ghost btn--block', [icon('restart'), h('span', { text: t('common.restartEpisode') })], () => {
-          if (!tapAllowed()) return
-          hapticTap()
-          restartEpisode()
-        }),
+          : button('btn btn--primary btn--block btn--lg', [icon('book'), h('span', { text: t('common.toStory') })], () => nav.toStory(info.storyId), {}, {
+              target: 'end.toStory',
+            }),
+        nextReady ? button('btn btn--secondary btn--block', t('common.toStory'), () => nav.toStory(info.storyId), {}, { target: 'end.toStory' }) : null,
+        button(
+          'btn btn--ghost btn--block',
+          [icon('restart'), h('span', { text: t('common.restartEpisode') })],
+          () => {
+            if (!tapAllowed()) return
+            hapticTap()
+            restartEpisode()
+          },
+          {},
+          { target: 'end.restart' },
+        ),
       ]),
     ]),
   )

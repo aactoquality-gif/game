@@ -1,5 +1,7 @@
 /** Мини-хелперы DOM и иконки. Без фреймворков: весь интерфейс — несколько экранов из кнопок и текста */
 
+import { trackTap, type Tap } from '../tracking'
+
 type Child = Node | string | null | undefined | false
 
 export function h<K extends keyof HTMLElementTagNameMap>(
@@ -21,16 +23,23 @@ export function h<K extends keyof HTMLElementTagNameMap>(
   return node
 }
 
-/** Кнопка с обработчиком; stopPropagation — чтобы тап по кнопке не листал экран */
+/**
+ * Кнопка с обработчиком; stopPropagation — чтобы тап по кнопке не листал экран.
+ * tap — цель аналитики (src/tracking.ts): событие ui_tap уходит до onClick, в контексте экрана,
+ * где нажали. У каждой кнопки интерфейса tap обязателен — check:ui проверяет атрибут data-track.
+ */
 export function button(
   className: string,
   content: Child[] | string,
   onClick: () => void,
   attrs: Record<string, string | undefined> = {},
+  tap?: Tap,
 ): HTMLButtonElement {
   const b = h('button', { class: className, type: 'button', ...attrs }, typeof content === 'string' ? [content] : content)
+  if (tap) b.dataset.track = tap.target
   b.addEventListener('click', (event) => {
     event.stopPropagation()
+    if (tap) trackTap(tap)
     onClick()
   })
   return b

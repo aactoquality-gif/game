@@ -10,6 +10,7 @@ import { getProgress, getStory, nextEpisodeFor } from '../engine'
 import { h, button, icon } from './dom'
 import { confirmDialog, toast } from './overlay'
 import { progressBar } from './menu'
+import type { Tap } from '../tracking'
 import { t } from '../i18n'
 
 export function renderStory(root: HTMLElement, storyId: string, nav: Nav): void {
@@ -21,12 +22,19 @@ export function renderStory(root: HTMLElement, storyId: string, nav: Nav): void 
   // Главная кнопка
   let cta: HTMLElement
   if (next?.state === 'continue') {
-    cta = button('btn btn--primary btn--block btn--lg', [icon('play'), h('span', { text: t('story.continue', { episode: next.meta.title }) })], () =>
-      nav.read(storyId, next.meta.n),
+    cta = button(
+      'btn btn--primary btn--block btn--lg',
+      [icon('play'), h('span', { text: t('story.continue', { episode: next.meta.title }) })],
+      () => nav.read(storyId, next.meta.n),
+      {},
+      { target: 'story.cta', value: 'continue' },
     )
   } else if (next) {
     const label = next.meta.n === 1 && !p?.completed.length ? t('story.read') : t('story.readEpisode', { episode: next.meta.title })
-    cta = button('btn btn--primary btn--block btn--lg', [icon('book'), h('span', { text: label })], () => nav.read(storyId, next.meta.n))
+    cta = button('btn btn--primary btn--block btn--lg', [icon('book'), h('span', { text: label })], () => nav.read(storyId, next.meta.n), {}, {
+      target: 'story.cta',
+      value: 'read',
+    })
   } else {
     const soon = story.episodes.find((e) => e.status === 'soon')
     cta = h('button', { class: 'btn btn--secondary btn--block btn--lg', type: 'button', disabled: '' }, [
@@ -36,7 +44,7 @@ export function renderStory(root: HTMLElement, storyId: string, nav: Nav): void 
   }
 
   const screen = h('div', { class: 'screen screen--story' }, [
-    h('div', { class: 'topbar' }, [button('icon-btn btn-back', [icon('back')], () => nav.toMenu(), { 'aria-label': t('common.back') })]),
+    h('div', { class: 'topbar' }, [button('icon-btn btn-back', [icon('back')], () => nav.toMenu(), { 'aria-label': t('common.back') }, { target: 'story.back' })]),
     h('div', { class: 'story-cover', style: `--tint:${story.tint}` }, [
       h('div', { class: 'story-cover__case', text: t('common.caseNo', { no: story.caseNo }) }),
       h('h1', { class: 'story-cover__title', text: story.title }),
@@ -63,12 +71,14 @@ function episodeRow(storyId: string, e: EpisodeMeta, p: StoryProgress | null, na
 
   let status: HTMLElement
   let onClick: () => void
+  let tap: Tap = { target: 'story.episode', value: e.n }
   let cls = 'episode'
 
   if (!released) {
     cls += ' episode--soon'
     status = h('span', { class: 'episode__status' }, [icon('lock', 'icon icon--sm'), h('span', { text: t('common.soon') })])
     onClick = () => toast(t('story.episodeLater', { episode: e.title }))
+    tap = { target: 'story.episodeSoon', value: e.n }
   } else if (reading) {
     cls += ' episode--current'
     status = h('span', { class: 'episode__status episode__status--accent', text: t('story.statusReading', { pct: p!.pct }) })
@@ -81,8 +91,10 @@ function episodeRow(storyId: string, e: EpisodeMeta, p: StoryProgress | null, na
         title: t('story.rereadTitle', { episode: e.title.toLowerCase() }),
         text: t('story.rereadText'),
         confirm: t('story.rereadConfirm'),
+        tap: 'dialog.reread',
         onConfirm: () => nav.read(storyId, e.n, { restart: true }),
       })
+    tap = { target: 'story.episodeReread', value: e.n }
   } else {
     status = h('span', { class: 'episode__status', text: t('story.statusAvailable') })
     onClick = () => nav.read(storyId, e.n)
@@ -96,5 +108,7 @@ function episodeRow(storyId: string, e: EpisodeMeta, p: StoryProgress | null, na
       status,
     ],
     onClick,
+    {},
+    tap,
   )
 }
