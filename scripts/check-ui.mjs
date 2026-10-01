@@ -18,7 +18,7 @@ import { preview } from 'vite'
 import { chromium } from 'playwright-core'
 import { gzipSync } from 'node:zlib'
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 
 const OUT = resolve('.checks/ui')
 const DIST_ASSETS = resolve('dist/assets')
@@ -231,7 +231,11 @@ function auditLayout({ minTap, safeBottom, zSelectors }) {
     if (el) zIndex[sel] = getComputedStyle(el).zIndex
   }
 
+  // Подстановка t() не сработала: на экране осталось {имя}
+  const placeholders = [...new Set(document.body.innerText.match(/\{[A-Za-z_]+\}/g) ?? [])]
+
   return {
+    placeholders,
     zIndex,
     hScroll: doc.scrollWidth > vw + 1,
     vScroll: doc.scrollHeight > vh + 1,
@@ -380,6 +384,7 @@ async function runCase(browser, baseUrl, apiLog, vp, mode) {
     expect(m.cutOff.length === 0, `${name}: кнопки и блоки текста не обрезаны краем экрана${m.cutOff.length ? ` — ${m.cutOff.join(', ')}` : ''}`)
     if (m.smallTargets.length) warn(`${name}: зона касания меньше ${MIN_TAP} px — ${m.smallTargets.join('; ')}`)
     if (m.underHomeBar.length) warn(`${name}: уходит под home bar (${SAFE_BOTTOM} px) — ${m.underHomeBar.join(', ')}`)
+    expect(m.placeholders.length === 0, `${name}: в текстах нет незаполненных подстановок${m.placeholders.length ? ` — ${m.placeholders.join(', ')}` : ''}`)
     for (const [sel, z] of Object.entries(m.zIndex)) expect(z === Z_EXPECTED[sel], `${name}: слой ${sel} = ${Z_EXPECTED[sel]} (токен z-index разрешился, сейчас ${z})`)
     const file = `${id}-${name}.png`
     await page.screenshot({ path: join(OUT, file) })
@@ -567,6 +572,114 @@ async function runConfigOffline(browser, baseUrl) {
 }
 
 // ---------------------------------------------------------------------------
+// Строки интерфейса мимо t(): кириллица в строковых литералах src/
+// Исключения: словари (src/locales), мок-данные сервера (src/api.mock.ts), console.* и new Error(...)
+// ---------------------------------------------------------------------------
+
+const SRC = resolve('src')
+const I18N_EXEMPT = [/^locales[\\/]/, /^api\.mock\.ts$/]
+
+function listTs(dir) {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
+    d.isDirectory() ? listTs(join(dir, d.name)) : d.name.endsWith('.ts') ? [join(dir, d.name)] : [],
+  )
+}
+
+/** Строковые литералы файла с номерами строк — без комментариев, с учётом шаблонов `...${}...` */
+function stringLiterals(code) {
+  const out = []
+  const templateDepths = [] // глубина {} кода, на которой открылся ${ — по ней понятно, где шаблон продолжается
+  let depth = 0
+  let line = 1
+  let i = 0
+  const readTemplate = () => {
+    const start = line
+    let text = ''
+    while (i < code.length) {
+      const c = code[i]
+      if (c === '\\') {
+        text += code[i + 1]
+        i += 2
+        continue
+      }
+      if (c === '`') {
+        i++
+        break
+      }
+      if (c === '$' && code[i + 1] === '{') {
+        templateDepths.push(depth)
+        i += 2
+        break
+      }
+      if (c === '\n') line++
+      text += c
+      i++
+    }
+    out.push({ text, line: start })
+  }
+  while (i < code.length) {
+    const c = code[i]
+    const d = code[i + 1]
+    if (c === '\n') {
+      line++
+      i++
+    } else if (c === '/' && d === '/') {
+      while (i < code.length && code[i] !== '\n') i++
+    } else if (c === '/' && d === '*') {
+      i += 2
+      while (i < code.length && !(code[i] === '*' && code[i + 1] === '/')) {
+        if (code[i] === '\n') line++
+        i++
+      }
+      i += 2
+    } else if (c === "'" || c === '"') {
+      const start = line
+      let text = ''
+      i++
+      while (i < code.length && code[i] !== c && code[i] !== '\n') {
+        if (code[i] === '\\') {
+          text += code[i + 1]
+          i += 2
+          continue
+        }
+        text += code[i]
+        i++
+      }
+      i++
+      out.push({ text, line: start })
+    } else if (c === '`') {
+      i++
+      readTemplate()
+    } else if (c === '}' && templateDepths.length && templateDepths[templateDepths.length - 1] === depth) {
+      templateDepths.pop()
+      i++
+      readTemplate()
+    } else {
+      if (c === '{') depth++
+      if (c === '}') depth--
+      i++
+    }
+  }
+  return out
+}
+
+function hardcodedUiStrings() {
+  const found = []
+  for (const file of listTs(SRC)) {
+    const rel = relative(SRC, file)
+    if (I18N_EXEMPT.some((re) => re.test(rel))) continue
+    const code = readFileSync(file, 'utf8')
+    const lines = code.split('\n')
+    for (const lit of stringLiterals(code)) {
+      if (!/[А-Яа-яЁё]/.test(lit.text)) continue
+      if (/console\.|new Error\(/.test(lines[lit.line - 1])) continue
+      found.push(`src/${rel.replace(/\\/g, '/')}:${lit.line} «${lit.text.trim().slice(0, 40)}»`)
+    }
+  }
+  return found
+}
+
+// ---------------------------------------------------------------------------
 // Бюджет сборки
 // ---------------------------------------------------------------------------
 
@@ -655,6 +768,7 @@ async function main() {
 
   const global = { errors: [], bundleKb: bundleSize() }
   if (global.bundleKb > BUDGET_KB) global.errors.push(`бюджет сборки превышен: ${global.bundleKb} КБ gzip > ${BUDGET_KB}`)
+  for (const hit of hardcodedUiStrings()) global.errors.push(`строка интерфейса мимо t(): ${hit}`)
 
   // /api отвечает заглушка: события копятся здесь, прокси на локальный сервер не нужен.
   // Так проверяется настоящий путь отправки, включая sendBeacon при сворачивании.

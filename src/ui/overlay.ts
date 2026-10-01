@@ -6,6 +6,7 @@
  */
 
 import { h, button, icon } from './dom'
+import { t } from '../i18n'
 
 interface Layer {
   root: HTMLElement
@@ -95,7 +96,7 @@ export function confirmDialog(opts: { title: string; text: string; confirm: stri
     h('div', { class: 'dialog-box__title', text: opts.title }),
     h('div', { class: 'dialog-box__text', text: opts.text }),
     h('div', { class: 'dialog-box__actions' }, [
-      button('btn btn--secondary', opts.cancel ?? 'Отмена', closeTopOverlay),
+      button('btn btn--secondary', opts.cancel ?? t('common.cancel'), closeTopOverlay),
       button(`btn ${opts.danger ? 'btn--danger' : 'btn--primary'}`, opts.confirm, () => {
         closeTopOverlay()
         opts.onConfirm()

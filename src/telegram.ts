@@ -3,6 +3,8 @@
  * https://core.telegram.org/bots/webapps
  */
 
+import { t } from './i18n'
+
 declare global {
   interface Window {
     Telegram?: {
@@ -138,7 +140,7 @@ export function hapticSelect(): void {
 
 /** Получить имя пользователя */
 export function getUserName(): string {
-  return tg?.initDataUnsafe.user?.first_name ?? 'Путник'
+  return tg?.initDataUnsafe.user?.first_name ?? t('common.userFallback')
 }
 
 /** Системная кнопка «Назад» в шапке Telegram доступна */

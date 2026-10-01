@@ -14,6 +14,7 @@ import { renderStory } from './ui/story'
 import { onOverlayChange, hasOverlay, closeTopOverlay, closeAllOverlays } from './ui/overlay'
 import { h, button } from './ui/dom'
 import { store } from './store'
+import { t } from './i18n'
 
 const app = document.getElementById('app')!
 
@@ -67,18 +68,18 @@ export const nav: Nav = {
     renderLoading()
     openEpisode(storyId, episode, opts).catch((error) => {
       console.error('Не удалось открыть эпизод:', error)
-      renderError('Не удалось загрузить эпизод. Проверь подключение к интернету.', () => nav.read(storyId, episode, opts))
+      renderError(t('error.episode'), () => nav.read(storyId, episode, opts))
     })
   },
 }
 
 export function renderLoading(): void {
-  app.replaceChildren(h('div', { class: 'loading' }, [h('div', { class: 'spinner', 'aria-hidden': 'true' }), h('span', { text: 'Загрузка…' })]))
+  app.replaceChildren(h('div', { class: 'loading' }, [h('div', { class: 'spinner', 'aria-hidden': 'true' }), h('span', { text: t('common.loading') })]))
 }
 
 export function renderError(message: string, retry: () => void = () => location.reload()): void {
   app.replaceChildren(
-    h('div', { class: 'error' }, [h('p', { text: message }), button('btn btn--secondary', 'Попробовать снова', retry)]),
+    h('div', { class: 'error' }, [h('p', { text: message }), button('btn btn--secondary', t('common.retry'), retry)]),
   )
 }
 
