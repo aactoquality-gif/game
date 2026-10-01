@@ -29,3 +29,6 @@ dist-ssr
 
 # Analytics events (local dev)
 /data
+
+# UI check reports (npm run check:ui)
+.checks
