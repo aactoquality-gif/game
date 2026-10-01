@@ -80,6 +80,25 @@ const webApp = window.Telegram?.WebApp
  */
 export const tg = webApp && webApp.initData ? webApp : null
 
+/** Платформа — для состояния приложения и решений интерфейса (например, блок «Аккаунт» — только в браузере) */
+export interface PlatformInfo {
+  kind: 'telegram' | 'browser'
+  /** Клиент Telegram: ios, android, tdesktop, macos, weba…; вне Telegram — пусто */
+  client: string
+  /** Версия Bot API клиента; вне Telegram — пусто */
+  version: string
+  /** Десктоп: Telegram Desktop и веб-клиенты Telegram, вне Telegram — устройство с мышью */
+  isDesktop: boolean
+}
+
+const DESKTOP_CLIENTS = ['tdesktop', 'macos', 'weba', 'webk', 'web', 'unigram']
+
+export function getPlatform(): PlatformInfo {
+  if (tg) return { kind: 'telegram', client: tg.platform, version: tg.version, isDesktop: DESKTOP_CLIENTS.includes(tg.platform) }
+  const finePointer = typeof matchMedia === 'function' && matchMedia('(hover: hover) and (pointer: fine)').matches
+  return { kind: 'browser', client: '', version: '', isDesktop: finePointer }
+}
+
 /** Поддерживает ли клиент Telegram нужную версию Bot API */
 function supports(version: string): boolean {
   return !!tg && typeof tg.isVersionAtLeast === 'function' && tg.isVersionAtLeast(version)

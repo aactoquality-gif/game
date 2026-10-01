@@ -7,10 +7,12 @@
     "dev": "vite",
     "dev:server": "PORT=3000 node server/index.mjs",
     "build": "tsc && vite build",
+    "check:ui": "npm run build && node scripts/check-ui.mjs",
     "preview": "vite preview",
     "start": "node server/index.mjs"
   },
   "devDependencies": {
+    "playwright-core": "^1.63.0",
     "typescript": "~5.7.3",
     "vite": "^6.3.0"
   }
