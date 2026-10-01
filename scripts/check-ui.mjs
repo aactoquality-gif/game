@@ -251,10 +251,35 @@ function auditLayout({ minTap, safeBottom, zSelectors }) {
     if (el) zIndex[sel] = getComputedStyle(el).zIndex
   }
 
+  // Каркас: экраны и слои внутри кадра; чтение — без хедера и таббара; пустые зоны скрыты
+  let shell = null
+  const shellEl = document.querySelector('.app-shell')
+  if (shellEl) {
+    const f = shellEl.getBoundingClientRect()
+    const outside = []
+    for (const el of document.querySelectorAll('.layer, .toast, .screen, .stage, .loading, .error')) {
+      const r = el.getBoundingClientRect()
+      if (r.width === 0 || r.height === 0) continue
+      if (r.left < f.left - 1 || r.right > f.right + 1 || r.top < f.top - 1 || r.bottom > f.bottom + 1) outside.push(label(el))
+    }
+    const shown = (sel) => getComputedStyle(shellEl.querySelector(sel)).display !== 'none'
+    const filled = (...slots) => slots.some((sl) => shellEl.querySelector(`[data-slot="${sl}"]`)?.hasChildNodes())
+    shell = {
+      outside: [...new Set(outside)],
+      chrome: shellEl.dataset.chrome,
+      reading: !!document.querySelector('.stage'),
+      headerShown: shown('.app-header'),
+      tabbarShown: shown('.app-tabbar'),
+      headerFilled: filled('header', 'account'),
+      tabbarFilled: filled('tabbar'),
+    }
+  }
+
   // Подстановка t() не сработала: на экране осталось {имя}
   const placeholders = [...new Set(document.body.innerText.match(/\{[A-Za-z_]+\}/g) ?? [])]
 
   return {
+    shell,
     untracked: [...new Set(untracked)],
     placeholders,
     zIndex,
@@ -415,6 +440,16 @@ async function runCase(browser, baseUrl, apiLog, vp, mode) {
     expect(m.cutOff.length === 0, `${name}: кнопки и блоки текста не обрезаны краем экрана${m.cutOff.length ? ` — ${m.cutOff.join(', ')}` : ''}`)
     if (m.smallTargets.length) warn(`${name}: зона касания меньше ${MIN_TAP} px — ${m.smallTargets.join('; ')}`)
     if (m.underHomeBar.length) warn(`${name}: уходит под home bar (${SAFE_BOTTOM} px) — ${m.underHomeBar.join(', ')}`)
+    expect(!!m.shell, `${name}: экран внутри каркаса`)
+    if (m.shell) {
+      const sh = m.shell
+      expect(sh.outside.length === 0, `${name}: экраны и слои внутри кадра${sh.outside.length ? ` — за кадром: ${sh.outside.join(', ')}` : ''}`)
+      expect(sh.chrome === (sh.reading ? 'immersive' : 'full'), `${name}: каркас — ${sh.reading ? 'чтение без хедера и таббара' : 'обычный режим'} (сейчас ${sh.chrome})`)
+      expect(
+        sh.headerShown === (sh.headerFilled && sh.chrome === 'full') && sh.tabbarShown === (sh.tabbarFilled && sh.chrome === 'full'),
+        `${name}: хедер и таббар видны, только когда в них есть содержимое и это не чтение`,
+      )
+    }
     expect(m.untracked.length === 0, `${name}: у каждой кнопки есть цель аналитики${m.untracked.length ? ` — нет у ${m.untracked.join(', ')}` : ''}`)
     expect(m.placeholders.length === 0, `${name}: в текстах нет незаполненных подстановок${m.placeholders.length ? ` — ${m.placeholders.join(', ')}` : ''}`)
     for (const [sel, z] of Object.entries(m.zIndex)) expect(z === Z_EXPECTED[sel], `${name}: слой ${sel} = ${Z_EXPECTED[sel]} (токен z-index разрешился, сейчас ${z})`)
@@ -483,21 +518,30 @@ async function runCase(browser, baseUrl, apiLog, vp, mode) {
     const lastScreen = s.screen
 
     if (mode === 'telegram') expect(await page.evaluate(() => window.__check.backVisible()), 'Telegram: системная «Назад» видна в эпизоде')
+    if (mode === 'browser') expect(await page.evaluate(() => history.state?.gameBack === true), 'браузер: системная «Назад» перехвачена — запись в истории')
 
-    // 5. «Назад»: эпизод → история → меню
-    await back()
+    // 5. «Назад»: эпизод → история → меню.
+    // Браузер: эпизод → история — системной «Назад» (жест Android, кнопка браузера), история → меню — кнопкой на экране.
+    // Telegram: оба раза — системная BackButton.
+    if (mode === 'browser') await page.evaluate(() => history.back())
+    else await back()
     await waitFor((x) => x.screen === 'story', 'экран истории')
     await page.waitForTimeout(250)
     await audit('story')
     app = await readAppState(page)
     expect(app.ui.route.name === 'story' && typeof app.ui.route.storyId === 'string', 'состояние: маршрут — история')
-    await back()
+    if (mode === 'browser') await page.locator('.btn-back').click()
+    else await back()
     s = await waitFor((x) => x.screen === 'menu', 'главное меню')
     await page.waitForTimeout(250)
     await audit('menu')
     app = await readAppState(page)
     expect(app.ui.route.name === 'menu', 'состояние: маршрут — меню')
     if (mode === 'telegram') expect(!(await page.evaluate(() => window.__check.backVisible())), 'Telegram: на главном меню «Назад» скрыта')
+    if (mode === 'browser') {
+      await page.waitForTimeout(300)
+      expect(!(await page.evaluate(() => history.state?.gameBack)), 'браузер: у главного меню лишней записи «Назад» в истории нет')
+    }
     // «Продолжить» — только если есть недочитанный эпизод (src/ui/menu.ts)
     const continueCards = await page.locator('.continue-card').count()
     if (full) expect(continueCards === 0, 'эпизод дочитан — карточки «Продолжить» нет')
@@ -518,6 +562,7 @@ async function runCase(browser, baseUrl, apiLog, vp, mode) {
     const tapTargets = new Set(taps.map((e) => e.data?.target))
     expect(tapTargets.has('reading.pause'), 'аналитика: нажатие на меню паузы (ui_tap reading.pause)')
     expect(!tapTargets.has('reading.choice'), 'аналитика: выбор пишется только choice_made, без дубля ui_tap')
+    if (mode === 'browser') expect(tapTargets.has('story.back'), 'аналитика: нажатие кнопки «Назад» на экране истории (story.back)')
     const unknownTargets = [...tapTargets].filter((x) => !UI_TARGETS.includes(x))
     expect(unknownTargets.length === 0, `аналитика: цели нажатий только из каталога${unknownTargets.length ? ` — чужие: ${unknownTargets.join(', ')}` : ''}`)
     if (full) expect(names.has('episode_complete'), 'аналитика: episode_complete')
@@ -720,6 +765,153 @@ function hardcodedUiStrings() {
     }
   }
   return found
+}
+
+// ---------------------------------------------------------------------------
+// Регресс: то, что основной проход не трогает — клавиатура, рестарт с подтверждением, перечитывание,
+// тост, всё внутри кадра. Десктоп-браузер (кадр «телефон») и маленький телефон в Telegram.
+// ---------------------------------------------------------------------------
+
+async function runRegression(browser, baseUrl, apiLog, vpId, mode) {
+  const vp = VIEWPORTS.find((v) => v.id === vpId)
+  const id = `${vpId}-${mode}-regress`
+  const { res, context, page, expect, fail } = await openCase(browser, vp, mode, { id, label: 'регресс: клавиатура, диалоги, тост' })
+  const state = () => page.evaluate(readScreen)
+  const shot = async (name) => {
+    const file = `${id}-${name}.png`
+    await page.screenshot({ path: join(OUT, file) })
+    res.shots.push({ name, file })
+  }
+  const layersInFrame = () =>
+    page.evaluate(() => {
+      const f = document.querySelector('.app-shell').getBoundingClientRect()
+      const layers = [...document.querySelectorAll('.layer, .toast')]
+      return (
+        layers.length > 0 &&
+        layers.every((l) => {
+          const r = l.getBoundingClientRect()
+          return r.left >= f.left - 1 && r.right <= f.right + 1 && r.top >= f.top - 1 && r.bottom <= f.bottom + 1
+        })
+      )
+    })
+  const press = async (key) => {
+    await page.keyboard.press(key)
+    await page.waitForTimeout(TAP_GUARD_MS + 80)
+  }
+  try {
+    await page.goto(`${baseUrl}?debug`)
+    let s = await waitForScreen(page, (x) => ['text', 'push', 'choice'].includes(x.screen), 'первый экран')
+    const firstText = s.text
+    await page.waitForTimeout(TAP_GUARD_MS + 100)
+
+    // 1. Клавиатура (Telegram Desktop, браузер): Enter листает, цифра выбирает
+    for (let i = 0; i < 80 && s.screen !== 'choice'; i++) {
+      await press('Enter')
+      s = await state()
+    }
+    expect(s.screen === 'choice', 'клавиатура: Enter листает до выбора')
+    const beforeKey = s.text
+    await press('1')
+    await page.waitForTimeout(250)
+    s = await state()
+    expect(s.text !== beforeKey, 'клавиатура: цифра 1 выбирает первый вариант')
+
+    // 2. Пауза → «Начать эпизод сначала» → диалог поверх шторки → подтвердить
+    await page.locator('.hud button').first().click()
+    await page.locator('[data-track="pause.restart"]').click()
+    await page.locator('.layer--dialog').waitFor()
+    await page.waitForTimeout(250)
+    expect((await page.locator('.layer').count()) === 2, 'пауза: диалог «Начать сначала?» поверх шторки')
+    expect(await layersInFrame(), 'шторка и диалог внутри кадра')
+    await shot('restart-dialog')
+    await page.locator('.layer--dialog .btn--danger').click()
+    s = await waitForScreen(page, (x) => !x.overlay && x.text === firstText, 'эпизод с начала').catch(() => null)
+    expect(!!s, 'рестарт возвращает на первый экран эпизода, слои закрыты')
+    s = await state()
+    await page.waitForTimeout(TAP_GUARD_MS)
+
+    // 3. До конца эпизода с клавиатуры
+    for (let i = 0; i < 200 && s.screen !== 'end'; i++) {
+      await press(s.screen === 'choice' ? '1' : 'Enter')
+      s = await state()
+    }
+    expect(s.screen === 'end', 'клавиатура: эпизод проходится до карточки конца')
+
+    // 4. Карточка конца → «К истории» → прочитанный эпизод → «Перечитать?» → «Отмена»
+    await page.locator('[data-track="end.toStory"]').first().click()
+    await waitForScreen(page, (x) => x.screen === 'story', 'экран истории')
+    await page.waitForTimeout(250)
+    await page.locator('[data-track="story.episodeReread"]').first().click()
+    await page.locator('.layer--dialog').waitFor()
+    await page.waitForTimeout(250)
+    expect(await layersInFrame(), 'диалог «Перечитать?» внутри кадра')
+    await shot('reread-dialog')
+    await page.locator('.layer--dialog .btn--secondary').click()
+    s = await waitForScreen(page, (x) => x.screen === 'story' && !x.overlay, 'отмена диалога').catch(() => null)
+    expect(!!s, '«Отмена» закрывает диалог и оставляет на экране истории')
+
+    // 5. Меню → папка «В разработке» → тост внутри кадра
+    if (mode === 'telegram') await page.evaluate(() => window.__check.pressBack())
+    else await page.locator('.btn-back').click()
+    await waitForScreen(page, (x) => x.screen === 'menu', 'главное меню')
+    await page.waitForTimeout(250)
+    await page.locator('[data-track="menu.folderSoon"]').first().click()
+    await page.locator('.toast').waitFor()
+    await page.waitForTimeout(300)
+    expect(await layersInFrame(), 'тост внутри кадра')
+    await shot('toast')
+
+    // 6. Аналитика всего пути
+    await page.evaluate(() => window.dispatchEvent(new Event('pagehide')))
+    await page.waitForTimeout(400)
+    const events = apiLog.filter((p) => p.caseId === id).flatMap((p) => p.events ?? [])
+    const taps = events.filter((e) => e.event === 'ui_tap').map((e) => `${e.data?.target}${e.data?.value !== undefined ? `:${e.data.value}` : ''}`)
+    for (const need of ['pause.restart', 'dialog.restart:confirm', 'end.toStory', 'story.episodeReread:1', 'dialog.reread:cancel']) {
+      expect(taps.includes(need), `аналитика: ${need}`)
+    }
+    expect(taps.some((x) => x.startsWith('menu.folderSoon:')), 'аналитика: menu.folderSoon с историей')
+    expect(events.some((e) => e.event === 'episode_complete'), 'аналитика: episode_complete после рестарта')
+  } catch (error) {
+    fail(`сценарий прерван: ${error.message.split('\n')[0]}`)
+    await shot('crash').catch(() => {})
+  }
+  await context.close()
+  return res
+}
+
+/** Старое сохранение v1 (одна глава) переносится в историю «Намертво» и ведёт на сохранённый экран */
+async function runMigration(browser, baseUrl) {
+  const vp = VIEWPORTS.find((v) => v.id === '390')
+  const id = '390-browser-migrate'
+  const { res, context, page, expect, fail } = await openCase(browser, vp, 'browser', { id, label: 'перенос сохранения v1' })
+  const sceneId = 'e1_s04'
+  const chapter = JSON.parse(readFileSync(resolve('public/content/ru/ch1.json'), 'utf8'))
+  const expectedText = String(chapter.scenes?.[sceneId]?.text ?? '').trim()
+  try {
+    await page.addInitScript((save) => {
+      if (sessionStorage.getItem('__check_migrated')) return
+      localStorage.setItem('game_state', save)
+      sessionStorage.setItem('__check_migrated', '1')
+    }, JSON.stringify({ chapter: 1, sceneId, counters: {}, picks: [], run: 1, savedAt: Date.now() }))
+    await page.goto(`${baseUrl}?debug`)
+    await waitForScreen(page, (x) => !['unknown', 'loading'].includes(x.screen), 'первый экран')
+    let s = await page.evaluate(readScreen)
+    expect(s.screen === 'menu', 'сохранение v1: игра открывает меню, а не первый запуск')
+    expect((await page.locator('.continue-card').count()) === 1, 'сохранение v1: карточка «Продолжить» на месте')
+    await page.waitForTimeout(250)
+    await page.locator('.continue-card').click()
+    s = await waitForScreen(page, (x) => ['text', 'push', 'choice'].includes(x.screen), 'возврат в эпизод')
+    expect(!!expectedText && s.text === expectedText, 'сохранение v1: «Продолжить» ведёт на сохранённый экран')
+    const v = await page.evaluate(() => JSON.parse(localStorage.getItem('game_state') ?? '{}').v)
+    expect(v === 2, 'сохранение переписано в формат v2')
+    const file = `${id}.png`
+    await page.screenshot({ path: join(OUT, file) })
+    res.shots.push({ name: 'перенос v1', file })
+  } catch (error) {
+    fail(`сценарий прерван: ${error.message.split('\n')[0]}`)
+  }
+  await context.close()
+  return res
 }
 
 // ---------------------------------------------------------------------------
@@ -990,6 +1182,9 @@ async function main() {
     for (const [id, run] of [
       ['390-browser-flags', runFlagsOn],
       ['390-telegram-config-offline', runConfigOffline],
+      ['1440-browser-regress', (b, u) => runRegression(b, u, apiLog, '1440', 'browser')],
+      ['320-telegram-regress', (b, u) => runRegression(b, u, apiLog, '320', 'telegram')],
+      ['390-browser-migrate', runMigration],
     ]) {
       if (!selected(id)) continue
       logResult(await run(browser, baseUrl))

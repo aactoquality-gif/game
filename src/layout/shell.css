@@ -150,9 +150,11 @@
 }
 
 /* Пока хедер и таббар на экране, отступы под «чёлку» и home bar уже забрали они —
-   экраны внутри контента видят нули и не удваивают отступ */
-.app-shell[data-chrome='full'] > .app-content {
+   экраны внутри контента видят нули и не удваивают отступ. Скрытая зона отступ не забирает */
+.app-shell[data-chrome='full'][data-header='on'] > .app-content {
   --top: 0px;
+}
+.app-shell[data-chrome='full'][data-tabbar='on'] > .app-content {
   --safe-bottom: 0px;
 }
 
@@ -183,8 +185,10 @@
   padding-inline: max(var(--shell-pad-x), var(--safe-left)) max(var(--shell-pad-x), var(--safe-right));
 }
 
-/* --- Режим чтения: хедер и таббар убираются, контент — на весь кадр --- */
+/* --- Режим чтения и пустые зоны: хедер и таббар убираются, контент — на весь кадр --- */
 .app-shell[data-chrome='immersive'] > .app-header,
-.app-shell[data-chrome='immersive'] > .app-tabbar {
+.app-shell[data-chrome='immersive'] > .app-tabbar,
+.app-shell[data-header='off'] > .app-header,
+.app-shell[data-tabbar='off'] > .app-tabbar {
   display: none;
 }

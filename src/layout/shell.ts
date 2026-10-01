@@ -1,7 +1,7 @@
 /**
  * Каркас приложения: кадр с тремя зонами — хедер / контент / таббар.
  *
- * Шаг 1.1 — только структура, в игру подключается на шаге 1.2. Слоты:
+ * Создаётся один раз в app.ts; экраны игры монтируются в shell.content. Слоты:
  *   shell.header  — левая часть хедера (заголовок экрана, своя «Назад» в браузере)
  *   shell.account — слот «Аккаунт»: пустой не занимает места; размещение — шаг 7
  *   shell.content — единственная прокручиваемая зона; сюда монтируются экраны
@@ -9,6 +9,8 @@
  *   shell.backdrop — фон вокруг кадра на широком экране
  *
  * Режим 'immersive' убирает хедер и таббар — для экрана чтения.
+ * Пустые зоны не показываются: хедер — пока пусты слоты header и account, таббар — пока пуст tabbar
+ * (data-header / data-tabbar = on | off). Зоны появятся сами, когда шаги 3–4 положат в них кнопки.
  * Стили — shell.css: размер кадра решает окно, всё внутри — @container app.
  */
 
@@ -42,6 +44,14 @@ export function createShell(mount: HTMLElement): Shell {
   ])
 
   mount.replaceChildren(backdrop, root)
+
+  const syncZones = (): void => {
+    root.dataset.header = header.hasChildNodes() || account.hasChildNodes() ? 'on' : 'off'
+    root.dataset.tabbar = tabbar.hasChildNodes() ? 'on' : 'off'
+  }
+  const observer = new MutationObserver(syncZones)
+  for (const slot of [header, account, tabbar]) observer.observe(slot, { childList: true })
+  syncZones()
 
   return {
     root,

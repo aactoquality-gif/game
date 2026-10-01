@@ -1,28 +1,70 @@
 /**
- * Навигация между экранами: меню → история → чтение.
+ * Навигация между экранами: меню → история → чтение. Экраны живут в каркасе (src/layout/shell.ts):
+ * в зоне контента, слои — внутри кадра; на чтении хедер и таббар убираются (режим immersive).
  *
- * «Назад»: в Telegram — системная кнопка в шапке, в браузере — своя кнопка и Esc.
- * Сначала закрывает верхний слой (шторку, диалог), потом ведёт на экран выше.
+ * «Назад»: в Telegram — системная кнопка в шапке; в браузере — своя кнопка, Esc и системная «Назад»
+ * (жест Android, кнопка браузера). Сначала закрывает верхний слой (шторку, диалог), потом ведёт на экран выше.
  */
 
 import type { Nav } from './ui/nav'
-import { setNativeBack } from './telegram'
+import { setNativeBack, tg } from './telegram'
 import { closeEpisode, openEpisode } from './engine'
 import { track, updateContext } from './analytics'
 import { renderMenu } from './ui/menu'
 import { renderStory } from './ui/story'
-import { onOverlayChange, hasOverlay, closeTopOverlay, closeAllOverlays } from './ui/overlay'
+import { onOverlayChange, hasOverlay, closeTopOverlay, closeAllOverlays, setOverlayHost } from './ui/overlay'
 import { h, button } from './ui/dom'
 import { store } from './store'
 import { t } from './i18n'
+import { createShell } from './layout/shell'
 
-const app = document.getElementById('app')!
+const shell = createShell(document.getElementById('app')!)
+/** Зона контента каркаса: сюда рендерятся все экраны */
+const app = shell.content
+setOverlayHost(shell.root)
+
+// Чтение — без хедера и таббара, остальные экраны — с ними (пустые зоны каркас прячет сам)
+store.select(
+  (s) => s.ui.route.name,
+  (name) => shell.setChrome(name === 'reading' ? 'immersive' : 'full'),
+  { immediate: true },
+)
 
 let backAction: (() => void) | null = null
 
 function refreshNativeBack(): void {
   setNativeBack(hasOverlay() ? () => closeTopOverlay() : backAction)
+  syncHistoryGuard()
 }
+
+// ---------------------------------------------------------------------------
+// Системная «Назад» в браузере. Без неё жест Android и кнопка браузера закрывают игру посреди эпизода.
+// Пока игре есть куда возвращаться, в истории лежит одна «страховочная» запись: «Назад» снимает её,
+// игра делает шаг назад и, если дальше ещё есть куда, кладёт запись снова. В Telegram — только BackButton.
+// ---------------------------------------------------------------------------
+
+const useHistory = !tg
+let guarded = false
+
+function syncHistoryGuard(): void {
+  if (!useHistory) return
+  const canGoBack = hasOverlay() || backAction !== null
+  if (canGoBack && !guarded) {
+    history.pushState({ gameBack: true }, '')
+    guarded = true
+  } else if (!canGoBack && guarded) {
+    // Пришли к корню своей кнопкой — убираем лишнюю запись, чтобы следующая «Назад» сразу выходила
+    guarded = false
+    history.back()
+  }
+}
+
+window.addEventListener('popstate', () => {
+  if (!useHistory || !guarded) return
+  guarded = false
+  goBack()
+  syncHistoryGuard()
+})
 
 function setBack(action: (() => void) | null): void {
   backAction = action

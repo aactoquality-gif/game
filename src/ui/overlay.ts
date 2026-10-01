@@ -17,6 +17,16 @@ interface Layer {
 const stack: Layer[] = []
 let onStackChange: (() => void) | null = null
 
+/**
+ * Куда добавлять слои и тосты. app.ts передаёт сюда кадр каркаса: на десктопе шторки и тосты
+ * должны жить внутри «телефона», а не растягиваться на всё окно. По умолчанию — body.
+ */
+let host: HTMLElement = document.body
+
+export function setOverlayHost(el: HTMLElement): void {
+  host = el
+}
+
 /** app.ts подписывается, чтобы переключать системную кнопку «Назад» Telegram */
 export function onOverlayChange(cb: () => void): void {
   onStackChange = cb
@@ -42,7 +52,7 @@ export function closeAllOverlays(): void {
 }
 
 function openLayer(root: HTMLElement, onClose?: () => void): void {
-  document.body.appendChild(root)
+  host.appendChild(root)
   stack.push({ root, onClose })
   requestAnimationFrame(() => root.classList.add('layer--open'))
   onStackChange?.()
@@ -134,7 +144,7 @@ export function toast(text: string): void {
   document.querySelector('.toast')?.remove()
   clearTimeout(toastTimer)
   const t = h('div', { class: 'toast', role: 'status', text })
-  document.body.appendChild(t)
+  host.appendChild(t)
   requestAnimationFrame(() => t.classList.add('toast--show'))
   toastTimer = setTimeout(() => {
     t.classList.remove('toast--show')
