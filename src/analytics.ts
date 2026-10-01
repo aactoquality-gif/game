@@ -12,6 +12,8 @@
 // Типы
 // ---------------------------------------------------------------------------
 
+import type { EventName } from './tracking'
+
 type Platform = 'telegram' | 'browser'
 
 interface AnalyticsEvent {
@@ -92,8 +94,8 @@ export function updateContext(opts: { story?: string; episode?: number; run?: nu
   if (opts.screen !== undefined) currentScreen = opts.screen
 }
 
-/** Отправить событие в очередь */
-export function track(event: string, data?: Record<string, unknown>): void {
+/** Отправить событие в очередь. Имена — только из каталога src/tracking.ts */
+export function track(event: EventName, data?: Record<string, unknown>): void {
   if (event === 'screen_view') screensInRun++
 
   buffer.push({

@@ -1,0 +1,69 @@
+/* Стенд каркаса (layout.html): подсветка зон и замеры. В сборку игры не входит. */
+
+.app-shell[data-debug] > .app-header {
+  background: color-mix(in srgb, #5e8ed6 18%, var(--bg));
+}
+.app-shell[data-debug] > .app-content {
+  background: color-mix(in srgb, var(--ok) 7%, var(--bg));
+}
+.app-shell[data-debug] > .app-tabbar {
+  background: color-mix(in srgb, var(--kraft) 22%, var(--surface));
+}
+.app-shell[data-debug] .app-header__inner,
+.app-shell[data-debug] .app-tabbar__inner {
+  outline: 1px dashed var(--line-2);
+  outline-offset: -1px;
+}
+
+.shell-placeholder {
+  font: 600 14px/1.2 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.shell-readout {
+  margin-top: 8px;
+  font: 12px/1.6 var(--font-mono);
+  color: var(--text-2);
+  white-space: pre-line;
+}
+
+.shell-toggle {
+  margin: 16px 0 8px;
+}
+
+.shell-filler {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+  color: var(--muted);
+}
+
+/* Бейдж брейкпоинта кадра — над таббаром */
+.shell-badge {
+  position: absolute;
+  right: 8px;
+  bottom: calc(var(--shell-tabbar-h) + var(--safe-bottom) + 8px);
+  z-index: var(--z-toast);
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--brass);
+  color: var(--brass-ink);
+  font: 600 11px/1.2 var(--font-mono);
+  pointer-events: none;
+}
+.app-shell[data-chrome='immersive'] > .shell-badge {
+  bottom: calc(var(--safe-bottom) + 8px);
+}
+
+/* Зонд: position: fixed внутри кадра должен отсчитываться от кадра (так будут вести себя шторки) */
+.shell-probe {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  pointer-events: none;
+  visibility: hidden;
+}

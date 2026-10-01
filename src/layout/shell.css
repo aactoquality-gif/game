@@ -1,0 +1,194 @@
+/* ==========================================================================
+   Каркас приложения — шаг 1.1: кадр «телефон в центре» + container queries
+   Три зоны по вертикали: хедер / контент / таббар. Документ не прокручивается —
+   прокручивается только .app-content.
+
+   Кадр (.app-shell) — единственное, что зависит от размера ОКНА (@media):
+     окно уже 600 px            — телефон: кадр на весь экран;
+     от 600 px                  — колонка 440 px по центру (планшет, телефон боком, широкое окно);
+     от 600×700 + мышь          — десктоп: колонка становится «телефоном» — скругления, тень, поля.
+   Всё внутри кадра адаптируется к размеру КАДРА: @container app (…), не @media.
+   ========================================================================== */
+
+/* --- Фон вокруг кадра: виден только когда кадр уже окна ------------------ */
+.app-backdrop {
+  display: none;
+}
+
+/* --- Кадр ---------------------------------------------------------------- */
+.app-shell {
+  /* Боковые safe area — телефон боком с «чёлкой» */
+  --safe-left: max(env(safe-area-inset-left, 0px), var(--tg-safe-area-inset-left, 0px));
+  --safe-right: max(env(safe-area-inset-right, 0px), var(--tg-safe-area-inset-right, 0px));
+
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto; /* minmax(0) — длинный контент не выдавит таббар */
+  grid-template-columns: minmax(0, 1fr); /* длинная строка в хедере не раздует ширину кадра */
+  grid-template-areas:
+    'header'
+    'content'
+    'tabbar';
+  overflow: hidden;
+  background: var(--bg);
+  touch-action: manipulation; /* без задержки двойного тапа */
+
+  /* Кадр — контейнер по обеим осям: зоны подстраиваются под его ширину и высоту */
+  container: app / size;
+  /* position: fixed внутри кадра (шторки .layer, тосты) отсчитывается от кадра, а не от окна —
+     на десктопе слои не вылезут за «телефон». Сам container этого не даёт, нужен contain: layout */
+  contain: layout;
+}
+
+@media (min-width: 600px) {
+  .app-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    background:
+      radial-gradient(60% 55% at 50% 42%, color-mix(in srgb, var(--brass) 9%, transparent), transparent 70%),
+      color-mix(in srgb, var(--bg) 72%, black);
+  }
+
+  .app-shell {
+    max-width: 440px; /* самые большие телефоны — 430 px */
+    margin-inline: auto;
+    box-shadow:
+      1px 0 0 var(--line),
+      -1px 0 0 var(--line);
+  }
+}
+
+/* Десктоп с мышью и высоким окном: «телефон» с полями сверху и снизу */
+@media (min-width: 600px) and (min-height: 700px) and (hover: hover) and (pointer: fine) {
+  .app-shell {
+    max-height: min(932px, calc(100vh - 48px));
+    max-height: min(932px, calc(100dvh - 48px));
+    margin-block: auto;
+    border-radius: 28px;
+    box-shadow:
+      0 0 0 1px var(--line-2),
+      0 30px 80px rgba(0, 0, 0, 0.55);
+  }
+}
+
+/* --- Размеры зон: от размера кадра ---------------------------------------
+   Токены задаются на зонах (детях кадра): сам контейнер свои @container-правила не видит. */
+.app-shell > * {
+  --shell-header-h: 52px;
+  --shell-tabbar-h: 56px;
+  --shell-pad-x: 12px;
+  --shell-bp: 'xs';
+}
+
+/* Обычный телефон и кадр на десктопе */
+@container app (min-width: 360px) {
+  .app-shell > * {
+    --shell-header-h: 56px;
+    --shell-pad-x: 16px;
+    --shell-bp: 'sm';
+  }
+}
+
+/* Низкий кадр — телефон боком: зоны ужимаются, контенту остаётся высота */
+@container app (max-height: 500px) {
+  .app-shell > * {
+    --shell-header-h: 44px;
+    --shell-tabbar-h: 48px;
+    --shell-bp: 'low';
+  }
+}
+
+/* --- Хедер: фиксированная высота + отступ под «чёлку» / кнопки Telegram в fullscreen --- */
+.app-header {
+  grid-area: header;
+  position: relative;
+  z-index: var(--z-chrome);
+  padding-top: var(--top);
+  background: var(--bg);
+  box-shadow: 0 1px 0 var(--line); /* разделитель без влияния на высоту */
+}
+
+.app-header__inner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: var(--shell-header-h);
+  padding-inline: max(var(--shell-pad-x), var(--safe-left)) max(var(--shell-pad-x), var(--safe-right));
+}
+
+.app-header__main {
+  flex: 1 1 auto;
+  min-width: 0; /* длинный заголовок обрезается, а не выдавливает соседей */
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Слот «Аккаунт»: пустой — не занимает места. Где он живёт на десктопе — решение шага 7 */
+.app-header__account {
+  flex: none;
+  display: flex;
+  align-items: center;
+}
+.app-header__account:empty {
+  display: none;
+}
+
+/* --- Контент: единственная прокручиваемая зона --- */
+.app-content {
+  grid-area: content;
+  position: relative; /* экраны с position: absolute (.screen) заполняют зону, а не весь кадр */
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain; /* доскролл до края не передаётся документу */
+  -webkit-overflow-scrolling: touch;
+  outline: none;
+}
+
+/* Пока хедер и таббар на экране, отступы под «чёлку» и home bar уже забрали они —
+   экраны внутри контента видят нули и не удваивают отступ. Скрытая зона отступ не забирает */
+.app-shell[data-chrome='full'][data-header='on'] > .app-content {
+  --top: 0px;
+}
+.app-shell[data-chrome='full'][data-tabbar='on'] > .app-content {
+  --safe-bottom: 0px;
+}
+
+/* Колонка страницы с боковыми safe area */
+.app-page {
+  padding:
+    16px
+    max(var(--shell-pad-x), var(--safe-right))
+    calc(24px + var(--safe-bottom))
+    max(var(--shell-pad-x), var(--safe-left));
+}
+
+/* --- Таббар: фиксированная высота, прижат к низу, + отступ под home bar --- */
+.app-tabbar {
+  grid-area: tabbar;
+  position: relative;
+  z-index: var(--z-chrome);
+  padding-bottom: var(--safe-bottom);
+  background: var(--surface);
+  box-shadow: 0 -1px 0 var(--line);
+}
+
+.app-tabbar__inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--shell-tabbar-h);
+  padding-inline: max(var(--shell-pad-x), var(--safe-left)) max(var(--shell-pad-x), var(--safe-right));
+}
+
+/* --- Режим чтения и пустые зоны: хедер и таббар убираются, контент — на весь кадр --- */
+.app-shell[data-chrome='immersive'] > .app-header,
+.app-shell[data-chrome='immersive'] > .app-tabbar,
+.app-shell[data-header='off'] > .app-header,
+.app-shell[data-tabbar='off'] > .app-tabbar {
+  display: none;
+}

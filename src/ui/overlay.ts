@@ -7,6 +7,7 @@
 
 import { h, button, icon } from './dom'
 import { t } from '../i18n'
+import type { Tap, UiTarget } from '../tracking'
 
 interface Layer {
   root: HTMLElement
@@ -15,6 +16,16 @@ interface Layer {
 
 const stack: Layer[] = []
 let onStackChange: (() => void) | null = null
+
+/**
+ * Куда добавлять слои и тосты. app.ts передаёт сюда кадр каркаса: на десктопе шторки и тосты
+ * должны жить внутри «телефона», а не растягиваться на всё окно. По умолчанию — body.
+ */
+let host: HTMLElement = document.body
+
+export function setOverlayHost(el: HTMLElement): void {
+  host = el
+}
 
 /** app.ts подписывается, чтобы переключать системную кнопку «Назад» Telegram */
 export function onOverlayChange(cb: () => void): void {
@@ -41,7 +52,7 @@ export function closeAllOverlays(): void {
 }
 
 function openLayer(root: HTMLElement, onClose?: () => void): void {
-  document.body.appendChild(root)
+  host.appendChild(root)
   stack.push({ root, onClose })
   requestAnimationFrame(() => root.classList.add('layer--open'))
   onStackChange?.()
@@ -65,6 +76,7 @@ export interface SheetAction {
   icon?: Parameters<typeof icon>[0]
   variant?: 'primary' | 'secondary' | 'danger'
   onClick: () => void
+  tap?: Tap
 }
 
 export function openSheet(opts: { title: string; subtitle?: string; actions: SheetAction[]; extra?: HTMLElement }): void {
@@ -78,7 +90,7 @@ export function openSheet(opts: { title: string; subtitle?: string; actions: She
       'div',
       { class: 'sheet__actions' },
       opts.actions.map((a) =>
-        button(`btn btn--${a.variant ?? 'secondary'} btn--block`, [a.icon ? icon(a.icon) : null, h('span', { text: a.label })], a.onClick),
+        button(`btn btn--${a.variant ?? 'secondary'} btn--block`, [a.icon ? icon(a.icon) : null, h('span', { text: a.label })], a.onClick, {}, a.tap),
       ),
     ),
     opts.extra ?? null,
@@ -91,16 +103,31 @@ export function openSheet(opts: { title: string; subtitle?: string; actions: She
 // Подтверждение
 // ---------------------------------------------------------------------------
 
-export function confirmDialog(opts: { title: string; text: string; confirm: string; cancel?: string; danger?: boolean; onConfirm: () => void }): void {
+/** tap — цель аналитики диалога: кнопки отправят её с value confirm / cancel */
+export function confirmDialog(opts: {
+  title: string
+  text: string
+  confirm: string
+  cancel?: string
+  danger?: boolean
+  tap?: UiTarget
+  onConfirm: () => void
+}): void {
   const box = h('div', { class: 'dialog-box', role: 'alertdialog', 'aria-modal': 'true', 'aria-label': opts.title }, [
     h('div', { class: 'dialog-box__title', text: opts.title }),
     h('div', { class: 'dialog-box__text', text: opts.text }),
     h('div', { class: 'dialog-box__actions' }, [
-      button('btn btn--secondary', opts.cancel ?? t('common.cancel'), closeTopOverlay),
-      button(`btn ${opts.danger ? 'btn--danger' : 'btn--primary'}`, opts.confirm, () => {
-        closeTopOverlay()
-        opts.onConfirm()
-      }),
+      button('btn btn--secondary', opts.cancel ?? t('common.cancel'), closeTopOverlay, {}, opts.tap && { target: opts.tap, value: 'cancel' }),
+      button(
+        `btn ${opts.danger ? 'btn--danger' : 'btn--primary'}`,
+        opts.confirm,
+        () => {
+          closeTopOverlay()
+          opts.onConfirm()
+        },
+        {},
+        opts.tap && { target: opts.tap, value: 'confirm' },
+      ),
     ]),
   ])
   const root = h('div', { class: 'layer layer--dialog' }, [scrim(closeTopOverlay), box])
@@ -117,7 +144,7 @@ export function toast(text: string): void {
   document.querySelector('.toast')?.remove()
   clearTimeout(toastTimer)
   const t = h('div', { class: 'toast', role: 'status', text })
-  document.body.appendChild(t)
+  host.appendChild(t)
   requestAnimationFrame(() => t.classList.add('toast--show'))
   toastTimer = setTimeout(() => {
     t.classList.remove('toast--show')

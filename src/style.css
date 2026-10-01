@@ -244,7 +244,8 @@ button:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
 
 /* Папки-дела */
 .folders { display: grid; gap: 18px; }
-@media (min-width: 600px) { .folders { grid-template-columns: 1fr 1fr; } }
+/* Две колонки — только если кадр широкий (сейчас кадр не шире 440 px, на десктопе папки идут в столбик) */
+@container app (min-width: 600px) { .folders { grid-template-columns: 1fr 1fr; } }
 
 .folder {
   position: relative;
@@ -355,6 +356,7 @@ button:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
   flex-direction: column;
   justify-content: flex-end;
   min-height: min(44vh, 380px);
+  min-height: min(44cqh, 380px);
   padding: calc(var(--top) + 64px) 20px 26px;
   overflow: hidden;
   background:
@@ -495,6 +497,7 @@ button:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
 .panel {
   align-self: stretch;
   max-height: 58vh;
+  max-height: 58cqh;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 20px 20px 14px;
@@ -547,7 +550,7 @@ button:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
 .dialog--more .continue { visibility: hidden; }
 
 /* Выбор: стопка кнопок по центру, панель с вопросом — снизу и ниже ростом */
-.stage--choice .panel { max-height: 32vh; }
+.stage--choice .panel { max-height: 32vh; max-height: 32cqh; }
 
 .choice-zone {
   flex: 1;
@@ -834,9 +837,10 @@ button:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
 }
 
-/* === Маленькие экраны === */
-@media (max-width: 360px) {
-  :root { --gap: 12px; }
+/* === Маленький и низкий кадр ===
+   @container app — по размеру кадра каркаса, а не окна: на десктопе окно 1440, а кадр 440 */
+@container app (max-width: 360px) {
+  .app-content, .layer { --gap: 12px; }
   .panel { padding: 16px 16px 12px; }
   .panel--speech { padding-top: 22px; }
   .choice { min-height: 50px; padding: 12px 16px; font-size: 15px; }
@@ -844,7 +848,7 @@ button:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
   .story-cover__title { font-size: 36px; }
   .folder__title { font-size: 25px; }
 }
-@media (max-height: 620px) {
-  .stage--choice .panel { max-height: 26vh; }
+@container app (max-height: 620px) {
+  .stage--choice .panel { max-height: 26vh; max-height: 26cqh; }
   .choice-zone { margin-top: 48px; }
 }
