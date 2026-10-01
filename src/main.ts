@@ -9,6 +9,7 @@ import { initEngine, onScene, getCatalog, isFirstLaunch, nextEpisodeFor, getText
 import { initAnalytics } from './analytics'
 import { nav, app, renderLoading, renderError } from './app'
 import { renderScene, applyTextSize } from './ui/reading'
+import { startSync } from './sync'
 
 async function main(): Promise<void> {
   initTelegram()
@@ -21,6 +22,9 @@ async function main(): Promise<void> {
 
   renderLoading()
   onScene((scene, sceneId) => renderScene(app, scene, sceneId, nav))
+
+  // Конфиг, баланс, входящие — в фоне: первый экран их не ждёт (бюджет ≤ 3 с, гипотеза H3)
+  void startSync()
 
   try {
     await initEngine()

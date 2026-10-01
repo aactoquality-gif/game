@@ -33,6 +33,8 @@ const VIEWPORTS = [
   { id: '1440', width: 1440, height: 900, mobile: false },
 ]
 const MODES = ['browser', 'telegram']
+/** Шкала слоёв из src/style.css (--z-*): что должно получиться на экране */
+const Z_EXPECTED = { '.speaker': '1', '.topbar': '2', '.hud': '3', '.layer': '50', '.toast': '60' }
 /** Эпизод целиком проходим на основном размере; на остальных — до первого выбора и чуть дальше */
 const FULL_RUN = '390'
 
@@ -184,7 +186,7 @@ function readScreen() {
   return { screen, text: textEl ? textEl.textContent.trim() : '', overlay: !!q('.layer') }
 }
 
-function auditLayout({ minTap, safeBottom }) {
+function auditLayout({ minTap, safeBottom, zSelectors }) {
   const vw = innerWidth
   const vh = innerHeight
   const doc = document.scrollingElement
@@ -222,7 +224,15 @@ function auditLayout({ minTap, safeBottom }) {
     }
   }
 
+  // Слои: токены --z-* должны разрешаться в числа (опечатка в имени токена = z-index: auto)
+  const zIndex = {}
+  for (const sel of zSelectors) {
+    const el = document.querySelector(sel)
+    if (el) zIndex[sel] = getComputedStyle(el).zIndex
+  }
+
   return {
+    zIndex,
     hScroll: doc.scrollWidth > vw + 1,
     vScroll: doc.scrollHeight > vh + 1,
     smallTargets: [...new Set(smallTargets)],
@@ -235,10 +245,9 @@ function auditLayout({ minTap, safeBottom }) {
 // Один прогон: размер экрана × режим
 // ---------------------------------------------------------------------------
 
-async function runCase(browser, baseUrl, apiLog, vp, mode) {
-  const id = `${vp.id}-${mode}`
-  const full = vp.id === FULL_RUN
-  const res = { id, vp, mode, full, errors: [], warnings: [], passed: [], shots: [], screensSeen: 0 }
+/** Новый прогон: результат, контекст браузера с имитацией Telegram, страница со слежением за ошибками */
+async function openCase(browser, vp, mode, { id, label = '', full = false, allowFailed = [] }) {
+  const res = { id, label, vp, mode, full, errors: [], warnings: [], passed: [], shots: [], screensSeen: 0 }
   const fail = (msg) => res.errors.push(msg)
   const warn = (msg) => {
     if (!res.warnings.includes(msg)) res.warnings.push(msg)
@@ -252,6 +261,9 @@ async function runCase(browser, baseUrl, apiLog, vp, mode) {
       : { initData: '', version: '6.0', platform: 'unknown', safeBottom: 0 }
 
   const context = await browser.newContext({
+    // Метка прогона: заглушка /api раскладывает по ней пачки аналитики — запоздавший sendBeacon
+    // прошлого прогона не попадёт в этот
+    extraHTTPHeaders: { 'x-check-case': id },
     viewport: { width: vp.width, height: vp.height },
     deviceScaleFactor: vp.mobile ? 2 : 1,
     isMobile: vp.mobile,
@@ -259,7 +271,6 @@ async function runCase(browser, baseUrl, apiLog, vp, mode) {
     locale: 'ru-RU',
   })
 
-  apiLog.length = 0 // пачки аналитики этого прогона (принимает заглушка /api в preview-сервере)
   await context.route('https://telegram.org/js/telegram-web-app.js', (route) =>
     route.fulfill({ contentType: 'application/javascript', body: `(${telegramMock})(${JSON.stringify(cfg)})` }),
   )
@@ -276,11 +287,47 @@ async function runCase(browser, baseUrl, apiLog, vp, mode) {
     // sendBeacon при перезагрузке страница «отменяет», но браузер его доставляет —
     // доставку проверяет блок аналитики по тому, что принял сервер
     if (new URL(r.url()).pathname.startsWith('/api/') && r.failure()?.errorText === 'net::ERR_ABORTED') return
+    if (allowFailed.some((part) => r.url().includes(part))) return
     fail(`запрос не прошёл: ${r.url()} (${r.failure()?.errorText})`)
   })
   page.on('response', (r) => {
     if (r.status() >= 400) warn(`файл не найден (${r.status()}): ${new URL(r.url()).pathname}`)
   })
+
+  return { res, context, page, safeBottom, fail, warn, expect }
+}
+
+/** Ждать экран игры (меню, история, чтение…) */
+async function waitForScreen(page, pred, what, timeout = 8000) {
+  const start = Date.now()
+  let s = null
+  while (Date.now() - start < timeout) {
+    s = await page.evaluate(readScreen)
+    if (pred(s)) return s
+    await page.waitForTimeout(100)
+  }
+  throw new Error(`не дождались: ${what} (на экране: ${s?.screen})`)
+}
+
+/** Состояние приложения (store) — доступно при открытии с ?debug */
+const readAppState = (page) => page.evaluate(() => window.__game?.state() ?? null)
+
+/** Ждать, пока состояние приложения не станет нужным */
+async function waitForAppState(page, pred, what, timeout = 6000) {
+  const start = Date.now()
+  let st = null
+  while (Date.now() - start < timeout) {
+    st = await readAppState(page)
+    if (st && pred(st)) return st
+    await page.waitForTimeout(100)
+  }
+  throw new Error(`не дождались состояния: ${what}`)
+}
+
+async function runCase(browser, baseUrl, apiLog, vp, mode) {
+  const id = `${vp.id}-${mode}`
+  const full = vp.id === FULL_RUN
+  const { res, context, page, safeBottom, fail, warn, expect } = await openCase(browser, vp, mode, { id, full })
 
   const state = () => page.evaluate(readScreen)
   const waitFor = async (pred, what, timeout = 8000) => {
@@ -327,12 +374,13 @@ async function runCase(browser, baseUrl, apiLog, vp, mode) {
   const back = () => (mode === 'telegram' ? page.evaluate(() => window.__check.pressBack()) : page.keyboard.press('Escape'))
 
   const audit = async (name) => {
-    const m = await page.evaluate(auditLayout, { minTap: MIN_TAP, safeBottom })
+    const m = await page.evaluate(auditLayout, { minTap: MIN_TAP, safeBottom, zSelectors: Object.keys(Z_EXPECTED) })
     expect(!m.hScroll, `${name}: нет горизонтальной прокрутки`)
     expect(!m.vScroll, `${name}: документ зафиксирован, прокручивается только контент`)
     expect(m.cutOff.length === 0, `${name}: кнопки и блоки текста не обрезаны краем экрана${m.cutOff.length ? ` — ${m.cutOff.join(', ')}` : ''}`)
     if (m.smallTargets.length) warn(`${name}: зона касания меньше ${MIN_TAP} px — ${m.smallTargets.join('; ')}`)
     if (m.underHomeBar.length) warn(`${name}: уходит под home bar (${SAFE_BOTTOM} px) — ${m.underHomeBar.join(', ')}`)
+    for (const [sel, z] of Object.entries(m.zIndex)) expect(z === Z_EXPECTED[sel], `${name}: слой ${sel} = ${Z_EXPECTED[sel]} (токен z-index разрешился, сейчас ${z})`)
     const file = `${id}-${name}.png`
     await page.screenshot({ path: join(OUT, file) })
     res.shots.push({ name, file })
@@ -340,9 +388,18 @@ async function runCase(browser, baseUrl, apiLog, vp, mode) {
 
   try {
     // 1. Первый запуск → сразу эпизод (гипотеза H3)
-    await page.goto(baseUrl)
+    await page.goto(`${baseUrl}?debug`)
     let s = await waitFor((x) => !['unknown', 'loading'].includes(x.screen), 'первый экран')
     expect(['text', 'push', 'choice'].includes(s.screen), 'первый запуск открывает эпизод, а не меню')
+
+    // Состояние приложения: платформа, маршрут, конфиг; экономика выключена — баланс не запрашивается
+    let app = await waitForAppState(page, (x) => x.config.status === 'ready', 'конфиг загружен с сервера')
+    expect(app.platform.kind === mode, `состояние: платформа — ${mode}`)
+    expect(app.platform.isDesktop === !vp.mobile, `состояние: ${vp.mobile ? 'мобильное' : 'десктопное'} устройство определено верно`)
+    expect(app.ui.route.name === 'reading', 'состояние: маршрут — чтение')
+    expect(!app.config.economy_enabled && !app.config.store_enabled && !app.config.inbox_enabled, 'конфиг: экономика, магазин и входящие выключены')
+    expect(app.wallet.status === 'idle' && app.wallet.nishtyak === null, 'экономика выключена — баланс не запрашивается')
+    expect(app.inbox.status === 'idle', 'входящие выключены — не запрашиваются')
     await page.waitForTimeout(TAP_GUARD_MS + 100)
     remember(s)
     await audit('reading')
@@ -395,10 +452,14 @@ async function runCase(browser, baseUrl, apiLog, vp, mode) {
     await waitFor((x) => x.screen === 'story', 'экран истории')
     await page.waitForTimeout(250)
     await audit('story')
+    app = await readAppState(page)
+    expect(app.ui.route.name === 'story' && typeof app.ui.route.storyId === 'string', 'состояние: маршрут — история')
     await back()
     s = await waitFor((x) => x.screen === 'menu', 'главное меню')
     await page.waitForTimeout(250)
     await audit('menu')
+    app = await readAppState(page)
+    expect(app.ui.route.name === 'menu', 'состояние: маршрут — меню')
     if (mode === 'telegram') expect(!(await page.evaluate(() => window.__check.backVisible())), 'Telegram: на главном меню «Назад» скрыта')
     // «Продолжить» — только если есть недочитанный эпизод (src/ui/menu.ts)
     const continueCards = await page.locator('.continue-card').count()
@@ -409,7 +470,7 @@ async function runCase(browser, baseUrl, apiLog, vp, mode) {
     // 6. Аналитика: сворачивание досылает пачку
     await page.evaluate(() => window.dispatchEvent(new Event('pagehide')))
     await page.waitForTimeout(400)
-    const payloads = [...apiLog]
+    const payloads = apiLog.filter((p) => p.caseId === id)
     expect(payloads.every((p) => !p.invalid), 'аналитика: пачки событий — валидный JSON')
     const events = payloads.flatMap((p) => p.events ?? [])
     const names = new Set(events.map((e) => e.event))
@@ -449,6 +510,58 @@ async function runCase(browser, baseUrl, apiLog, vp, mode) {
   }
 
   res.screensSeen = seen.size
+  await context.close()
+  return res
+}
+
+// ---------------------------------------------------------------------------
+// Дополнительные сценарии: состояние и конфиг в крайних случаях
+// ---------------------------------------------------------------------------
+
+/** Флаги включены параметром ?ff= → баланс и входящие загружаются из API (пока моки) в состояние */
+async function runFlagsOn(browser, baseUrl) {
+  const vp = VIEWPORTS.find((v) => v.id === '390')
+  const { res, context, page, expect, fail } = await openCase(browser, vp, 'browser', { id: '390-browser-flags', label: 'флаги включены через ?ff=' })
+  try {
+    await page.goto(`${baseUrl}?debug&ff=economy_enabled,inbox_enabled`)
+    const app = await waitForAppState(page, (x) => x.wallet.status === 'ready' && x.inbox.status === 'ready', 'баланс и входящие загружены')
+    expect(app.config.economy_enabled && app.config.inbox_enabled && !app.config.store_enabled, 'включились ровно флаги из ?ff=')
+    expect(app.config.overrides.join(',') === 'economy_enabled,inbox_enabled', 'включённые через ?ff= флаги видны в состоянии')
+    expect(Number.isFinite(app.wallet.nishtyak) && Number.isFinite(app.wallet.generic) && app.wallet.syncedAt > 0, 'баланс: оба числа и время пришли из API')
+    expect(app.inbox.items.length > 0 && app.inbox.unread > 0 && app.inbox.unread <= app.inbox.items.length, 'входящие: список и счётчик непрочитанных')
+    const s = await waitForScreen(page, (x) => !['unknown', 'loading'].includes(x.screen), 'первый экран')
+    expect(['text', 'push', 'choice'].includes(s.screen), 'с включёнными флагами игра стартует как обычно')
+    const file = `${res.id}-reading.png`
+    await page.screenshot({ path: join(OUT, file) })
+    res.shots.push({ name: 'reading', file })
+  } catch (error) {
+    fail(`сценарий прерван: ${error.message.split('\n')[0]}`)
+  }
+  await context.close()
+  return res
+}
+
+/** Конфиг недоступен (сеть, сбой сервера) → игра стартует на значениях по умолчанию */
+async function runConfigOffline(browser, baseUrl) {
+  const vp = VIEWPORTS.find((v) => v.id === '390')
+  const { res, context, page, expect, fail } = await openCase(browser, vp, 'telegram', {
+    id: '390-telegram-config-offline',
+    label: 'конфиг недоступен',
+    allowFailed: ['/config.json'],
+  })
+  try {
+    await page.route('**/config.json', (route) => route.abort('failed'))
+    await page.goto(`${baseUrl}?debug`)
+    const app = await waitForAppState(page, (x) => x.config.status === 'error', 'отказ загрузки конфига обработан')
+    expect(!app.config.economy_enabled && !app.config.store_enabled && !app.config.inbox_enabled, 'без конфига всё новое выключено (значения по умолчанию)')
+    const s = await waitForScreen(page, (x) => !['unknown', 'loading'].includes(x.screen), 'первый экран')
+    expect(['text', 'push', 'choice'].includes(s.screen), 'без конфига игра открывает эпизод как обычно')
+    const file = `${res.id}-reading.png`
+    await page.screenshot({ path: join(OUT, file) })
+    res.shots.push({ name: 'reading', file })
+  } catch (error) {
+    fail(`сценарий прерван: ${error.message.split('\n')[0]}`)
+  }
   await context.close()
   return res
 }
@@ -498,7 +611,7 @@ function writeReport(results, global, startedAt) {
     .map(
       (r) => `
     <section class="case ${r.errors.length ? 'bad' : 'good'}">
-      <h2>${r.errors.length ? '✗' : '✓'} ${r.vp.width}×${r.vp.height} · ${MODE_LABEL[r.mode]}${r.full ? ' · весь эпизод' : ''}</h2>
+      <h2>${r.errors.length ? '✗' : '✓'} ${r.vp.width}×${r.vp.height} · ${MODE_LABEL[r.mode]}${r.full ? ' · весь эпизод' : ''}${r.label ? ` · ${esc(r.label)}` : ''}</h2>
       <p class="meta">проверок пройдено: ${r.passed.length} · ошибок: ${r.errors.length} · замечаний: ${r.warnings.length} · экранов пройдено: ${r.screensSeen}</p>
       ${r.errors.length ? `<ul class="errors">${r.errors.map((e) => `<li>✗ ${esc(e)}</li>`).join('')}</ul>` : ''}
       ${r.warnings.length ? `<ul class="warnings">${r.warnings.map((w) => `<li>! ${esc(w)}</li>`).join('')}</ul>` : ''}
@@ -554,10 +667,11 @@ async function main() {
         req.on('data', (chunk) => (body += chunk))
         req.on('end', () => {
           if (req.method === 'POST' && body) {
+            const caseId = String(req.headers['x-check-case'] ?? '')
             try {
-              apiLog.push(JSON.parse(body))
+              apiLog.push({ caseId, ...JSON.parse(body) })
             } catch {
-              apiLog.push({ invalid: true })
+              apiLog.push({ caseId, invalid: true })
             }
           }
           res.statusCode = 204
@@ -575,16 +689,26 @@ async function main() {
   const browser = await launchBrowser()
 
   const results = []
+  const logResult = (r) => {
+    results.push(r)
+    const mark = r.errors.length ? '✗' : '✓'
+    const extra = r.label ? ` · ${r.label}` : ''
+    console.log(`${mark} ${`${r.vp.width}×${r.vp.height}`.padEnd(9)} ${MODE_LABEL[r.mode].padEnd(8)} проверок: ${r.passed.length}, замечаний: ${r.warnings.length}${extra}`)
+    for (const e of r.errors) console.log(`    ✗ ${e}`)
+  }
   try {
     for (const vp of VIEWPORTS) {
       for (const mode of MODES) {
         if (ONLY && !ONLY.includes(`${vp.id}-${mode}`)) continue
-        const r = await runCase(browser, baseUrl, apiLog, vp, mode)
-        results.push(r)
-        const mark = r.errors.length ? '✗' : '✓'
-        console.log(`${mark} ${`${vp.width}×${vp.height}`.padEnd(9)} ${MODE_LABEL[mode].padEnd(8)} проверок: ${r.passed.length}, замечаний: ${r.warnings.length}`)
-        for (const e of r.errors) console.log(`    ✗ ${e}`)
+        logResult(await runCase(browser, baseUrl, apiLog, vp, mode))
       }
+    }
+    for (const [id, run] of [
+      ['390-browser-flags', runFlagsOn],
+      ['390-telegram-config-offline', runConfigOffline],
+    ]) {
+      if (ONLY && !ONLY.includes(id)) continue
+      logResult(await run(browser, baseUrl))
     }
   } finally {
     await browser.close()

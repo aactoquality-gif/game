@@ -13,6 +13,7 @@ import { renderMenu } from './ui/menu'
 import { renderStory } from './ui/story'
 import { onOverlayChange, hasOverlay, closeTopOverlay, closeAllOverlays } from './ui/overlay'
 import { h, button } from './ui/dom'
+import { store } from './store'
 
 const app = document.getElementById('app')!
 
@@ -44,6 +45,7 @@ export const nav: Nav = {
     closeEpisode()
     setBack(null)
     updateContext({ story: '', episode: 0, screen: '' })
+    store.patch('ui', { route: { name: 'menu' } })
     renderMenu(app, nav)
     track('menu_view')
   },
@@ -53,6 +55,7 @@ export const nav: Nav = {
     closeEpisode()
     setBack(() => nav.toMenu())
     updateContext({ story: storyId, episode: 0, screen: '' })
+    store.patch('ui', { route: { name: 'story', storyId } })
     renderStory(app, storyId, nav)
     track('story_view')
   },
@@ -60,6 +63,7 @@ export const nav: Nav = {
   read(storyId, episode, opts) {
     closeAllOverlays()
     setBack(() => nav.toStory(storyId))
+    store.patch('ui', { route: { name: 'reading', storyId, episode } })
     renderLoading()
     openEpisode(storyId, episode, opts).catch((error) => {
       console.error('Не удалось открыть эпизод:', error)

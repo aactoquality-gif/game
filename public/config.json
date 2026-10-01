@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "economy_enabled": false,
+  "store_enabled": false,
+  "inbox_enabled": false,
+  "languages": ["ru"]
+}
