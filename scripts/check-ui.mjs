@@ -14,7 +14,7 @@
  * Браузер ищется так: CHROME_PATH → Chromium Playwright → Google Chrome → Microsoft Edge.
  */
 
-import { preview } from 'vite'
+import { createServer, preview } from 'vite'
 import { chromium } from 'playwright-core'
 import { gzipSync } from 'node:zlib'
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -40,6 +40,7 @@ const FULL_RUN = '390'
 
 /** Быстрый прогон части сценариев: CHECK_ONLY=390-telegram,320-browser */
 const ONLY = process.env.CHECK_ONLY ? process.env.CHECK_ONLY.split(',').map((s) => s.trim()) : null
+const selected = (id) => !ONLY || ONLY.some((o) => id === o || id.startsWith(`${o}-`))
 
 const MODE_LABEL = { browser: 'браузер', telegram: 'Telegram' }
 /** Правило имени события на сервере (server/index.mjs, cleanEvent): иначе событие выбрасывается молча */
@@ -618,7 +619,8 @@ async function runConfigOffline(browser, baseUrl) {
 // ---------------------------------------------------------------------------
 
 const SRC = resolve('src')
-const I18N_EXEMPT = [/^locales[\\/]/, /^api\.mock\.ts$/]
+// layout/preview.ts — стенд каркаса (layout.html), в сборку игры не входит
+const I18N_EXEMPT = [/^locales[\\/]/, /^api\.mock\.ts$/, /^layout[\\/]preview\.ts$/]
 
 function listTs(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
@@ -718,6 +720,129 @@ function hardcodedUiStrings() {
     }
   }
   return found
+}
+
+// ---------------------------------------------------------------------------
+// Стенд каркаса (layout.html): кадр «телефон в центре» и зоны внутри него
+// ---------------------------------------------------------------------------
+
+const FRAME_W = 440 // ширина кадра от 600 px окна (src/layout/shell.css)
+const FRAME_MAX_H = 932
+
+/**
+ * frame: full — кадр на весь экран (телефон); column — колонка по центру (планшет, телефон боком,
+ * низкое окно); phone — «телефон» со скруглениями и полями (десктоп с мышью, окно от 600×700).
+ * bp — брейкпоинт кадра из @container: xs < 360, sm, low — высота кадра ≤ 500.
+ */
+const STAND_CASES = [
+  { id: 'shell-320', label: 'каркас', width: 320, height: 568, mobile: true, frame: 'full', bp: 'xs' },
+  { id: 'shell-390', label: 'каркас', width: 390, height: 844, mobile: true, frame: 'full', bp: 'sm' },
+  { id: 'shell-390-tg', label: 'каркас · Telegram fullscreen', width: 390, height: 844, mobile: true, tg: true, frame: 'full', bp: 'sm', insets: { top: 47, contentTop: 46 } },
+  { id: 'shell-390-immersive', label: 'каркас · режим чтения', width: 390, height: 844, mobile: true, query: '?immersive', frame: 'full', bp: 'sm', immersive: true },
+  { id: 'shell-844x390', label: 'каркас · телефон боком', width: 844, height: 390, mobile: true, frame: 'column', bp: 'low' },
+  { id: 'shell-768', label: 'каркас · планшет', width: 768, height: 1024, mobile: true, frame: 'column', bp: 'sm' },
+  { id: 'shell-1280x650', label: 'каркас · низкое окно десктопа', width: 1280, height: 650, mobile: false, frame: 'column', bp: 'sm' },
+  { id: 'shell-1440', label: 'каркас · десктоп', width: 1440, height: 900, mobile: false, frame: 'phone', bp: 'sm' },
+]
+
+function measureStand() {
+  const q = (s) => document.querySelector(s)
+  const r = (el) => {
+    const b = el.getBoundingClientRect()
+    return { left: b.left, top: b.top, right: b.right, bottom: b.bottom, width: b.width, height: b.height }
+  }
+  const shell = q('.app-shell')
+  const content = q('.app-content')
+  const header = q('.app-header')
+  const tabbar = q('.app-tabbar')
+  const shown = (el) => getComputedStyle(el).display !== 'none'
+  const before = JSON.stringify([r(header), r(tabbar)])
+  content.scrollTop = 300
+  const scrolled = content.scrollTop
+  const chromeStable = JSON.stringify([r(header), r(tabbar)]) === before
+  content.scrollTop = 0
+  const doc = document.scrollingElement
+  return {
+    vw: innerWidth,
+    vh: innerHeight,
+    frame: r(shell),
+    radius: parseFloat(getComputedStyle(shell).borderTopLeftRadius) || 0,
+    backdrop: shown(q('.app-backdrop')),
+    header: r(header),
+    tabbar: r(tabbar),
+    headerShown: shown(header),
+    tabbarShown: shown(tabbar),
+    content: r(content),
+    probe: r(q('.shell-probe')),
+    accountWidth: q('.app-header__account').getBoundingClientRect().width,
+    bp: getComputedStyle(content).getPropertyValue('--shell-bp').trim().replace(/^['"]|['"]$/g, ''),
+    scrolled,
+    chromeStable,
+    docLocked: doc.scrollHeight <= innerHeight + 1,
+    hScroll: doc.scrollWidth > innerWidth + 1,
+  }
+}
+
+async function runStandCase(browser, standUrl, c) {
+  const vp = { id: c.id, width: c.width, height: c.height, mobile: c.mobile }
+  const { res, context, page, expect, fail } = await openCase(browser, vp, c.tg ? 'telegram' : 'browser', { id: c.id, label: c.label })
+  const near = (a, b) => Math.abs(a - b) <= 1
+  try {
+    await page.goto(`${standUrl}${c.query ?? ''}`)
+    await page.waitForSelector('.app-shell')
+    if (c.insets) {
+      await page.evaluate((ins) => {
+        const s = document.documentElement.style
+        s.setProperty('--tg-safe-area-inset-top', `${ins.top}px`)
+        s.setProperty('--tg-content-safe-area-inset-top', `${ins.contentTop}px`)
+        window.dispatchEvent(new Event('resize'))
+      }, c.insets)
+    }
+    await page.waitForTimeout(300)
+    const m = await page.evaluate(measureStand)
+    const f = m.frame
+
+    // Кадр: размер решает окно
+    if (c.frame === 'full') {
+      expect(near(f.left, 0) && near(f.top, 0) && near(f.width, m.vw) && near(f.height, m.vh), 'кадр на весь экран (телефон)')
+      expect(m.radius === 0 && !m.backdrop, 'без скруглений и фона вокруг')
+    } else {
+      expect(near(f.width, FRAME_W) && near(f.left, (m.vw - FRAME_W) / 2), `кадр — колонка ${FRAME_W} px по центру`)
+      expect(m.backdrop, 'вокруг кадра — фон')
+    }
+    if (c.frame === 'column') expect(near(f.top, 0) && near(f.height, m.vh) && m.radius === 0, 'колонка на всю высоту, без скруглений')
+    if (c.frame === 'phone') {
+      expect(near(f.height, Math.min(FRAME_MAX_H, m.vh - 48)) && near(f.top, (m.vh - f.height) / 2), 'десктоп: «телефон» с полями сверху и снизу')
+      expect(m.radius > 0, 'десктоп: скруглённые углы')
+    }
+
+    // Зоны внутри кадра
+    expect(m.bp === c.bp, `брейкпоинт кадра (@container) — ${c.bp}, сейчас ${m.bp || 'нет'}`)
+    if (c.immersive) {
+      expect(!m.headerShown && !m.tabbarShown, 'режим чтения: хедер и таббар скрыты')
+      expect(near(m.content.top, f.top) && near(m.content.bottom, f.bottom), 'режим чтения: контент на весь кадр')
+    } else {
+      expect(near(m.header.top, f.top) && near(m.tabbar.bottom, f.bottom), 'хедер прижат к верху кадра, таббар — к низу')
+      expect(near(m.content.top, m.header.bottom) && near(m.content.bottom, m.tabbar.top), 'контент занимает всё между хедером и таббаром')
+      expect(m.chromeStable, 'при прокрутке контента хедер и таббар на месте')
+    }
+    expect(m.scrolled > 0, 'длинный контент прокручивается внутри зоны')
+    expect(m.docLocked && !m.hScroll, 'документ зафиксирован, горизонтальной прокрутки нет')
+    expect(near(m.probe.left, f.left) && near(m.probe.width, f.width) && near(m.probe.bottom, f.bottom), 'position: fixed внутри кадра не выходит за кадр (шторки, тосты)')
+    expect(m.accountWidth === 0, 'пустой слот «Аккаунт» не занимает места')
+    if (c.insets) {
+      expect(near(m.header.height, c.insets.top + c.insets.contentTop + 56), 'Telegram fullscreen: хедер ниже «чёлки» и кнопок Telegram')
+      expect(near(m.tabbar.height, 56 + SAFE_BOTTOM), 'Telegram fullscreen: таббар выше home bar')
+    }
+
+    const file = `${c.id}.png`
+    await page.screenshot({ path: join(OUT, file) })
+    res.shots.push({ name: c.label, file })
+  } catch (error) {
+    fail(`сценарий прерван: ${error.message.split('\n')[0]}`)
+  }
+  await context.close()
+  return res
 }
 
 // ---------------------------------------------------------------------------
@@ -858,7 +983,7 @@ async function main() {
   try {
     for (const vp of VIEWPORTS) {
       for (const mode of MODES) {
-        if (ONLY && !ONLY.includes(`${vp.id}-${mode}`)) continue
+        if (!selected(`${vp.id}-${mode}`)) continue
         logResult(await runCase(browser, baseUrl, apiLog, vp, mode))
       }
     }
@@ -866,8 +991,20 @@ async function main() {
       ['390-browser-flags', runFlagsOn],
       ['390-telegram-config-offline', runConfigOffline],
     ]) {
-      if (ONLY && !ONLY.includes(id)) continue
+      if (!selected(id)) continue
       logResult(await run(browser, baseUrl))
+    }
+    const standCases = STAND_CASES.filter((c) => selected(c.id))
+    if (standCases.length) {
+      // Стенд каркаса не входит в сборку — открываем его через dev-сервер Vite
+      const stand = await createServer({ logLevel: 'error', server: { host: '127.0.0.1', port: 5180, strictPort: false, hmr: false } })
+      await stand.listen()
+      const standUrl = `${stand.resolvedUrls?.local?.[0] ?? 'http://127.0.0.1:5180/'}layout.html`
+      try {
+        for (const c of standCases) logResult(await runStandCase(browser, standUrl, c))
+      } finally {
+        await stand.close()
+      }
     }
   } finally {
     await browser.close()
