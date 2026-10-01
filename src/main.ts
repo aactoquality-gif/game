@@ -10,6 +10,7 @@ import { initAnalytics } from './analytics'
 import { nav, app, renderLoading, renderError } from './app'
 import { renderScene, applyTextSize } from './ui/reading'
 import { startSync } from './sync'
+import { t } from './i18n'
 
 async function main(): Promise<void> {
   initTelegram()
@@ -30,7 +31,7 @@ async function main(): Promise<void> {
     await initEngine()
   } catch (error) {
     console.error(error)
-    renderError('Не удалось загрузить игру. Проверь подключение к интернету.')
+    renderError(t('error.game'))
     return
   }
 

@@ -9,17 +9,18 @@ import type { StoryMeta } from '../types'
 import { getCatalog, getLastStoryId, getProgress, getStory, nextEpisodeFor } from '../engine'
 import { h, button, icon } from './dom'
 import { toast } from './overlay'
+import { t } from '../i18n'
 
 export function renderMenu(root: HTMLElement, nav: Nav): void {
   const catalog = getCatalog()
   const screen = h('div', { class: 'screen screen--menu' }, [
     h('header', { class: 'menu-head' }, [
-      h('div', { class: 'eyebrow', text: 'Антология' }),
-      h('h1', { class: 'menu-head__title', text: 'Личные дела' }),
+      h('div', { class: 'eyebrow', text: t('menu.eyebrow') }),
+      h('h1', { class: 'menu-head__title', text: t('menu.title') }),
     ]),
     continueCard(nav),
     h('div', { class: 'section-head' }, [
-      h('span', { class: 'section-head__title', text: 'Дела' }),
+      h('span', { class: 'section-head__title', text: t('menu.cases') }),
       h('span', { class: 'section-head__count', text: String(catalog.stories.length) }),
     ]),
     h('div', { class: 'folders' }, catalog.stories.map((s) => folderCard(s, nav))),
@@ -41,15 +42,15 @@ function continueCard(nav: Nav): HTMLElement | null {
     [
       h('div', { class: 'continue-card__thumb', style: `--tint:${story.tint}` }, [h('span', { text: story.caseNo })]),
       h('div', { class: 'continue-card__body' }, [
-        h('div', { class: 'eyebrow', text: 'Продолжить' }),
+        h('div', { class: 'eyebrow', text: t('menu.continue') }),
         h('div', { class: 'continue-card__title', text: story.title }),
-        h('div', { class: 'continue-card__meta', text: `${next.meta.title} · ${p.pct}%` }),
+        h('div', { class: 'continue-card__meta', text: t('menu.continueMeta', { episode: next.meta.title, pct: p.pct }) }),
         progressBar(p.pct),
       ]),
       h('div', { class: 'continue-card__play' }, [icon('play')]),
     ],
     () => nav.read(storyId, next.meta.n),
-    { 'aria-label': `Продолжить: ${story.title}, ${next.meta.title}` },
+    { 'aria-label': t('menu.continueAria', { story: story.title, episode: next.meta.title }) },
   )
   return card
 }
@@ -60,15 +61,15 @@ function folderCard(story: StoryMeta, nav: Nav): HTMLElement {
   const released = story.episodes.filter((e) => e.status === 'available').length
 
   let meta: string
-  if (!available) meta = 'Скоро'
-  else if (p?.sceneId && !p.completed.includes(p.episode)) meta = `Читаешь · эпизод ${p.episode} · ${p.pct}%`
-  else if (p?.completed.length) meta = `Прочитано эпизодов: ${p.completed.length} из ${story.episodes.length}`
-  else meta = `Сезон 1 · ${released} из ${story.episodes.length} эп.`
+  if (!available) meta = t('common.soon')
+  else if (p?.sceneId && !p.completed.includes(p.episode)) meta = t('menu.folderReading', { n: p.episode, pct: p.pct })
+  else if (p?.completed.length) meta = t('menu.folderCompleted', { done: p.completed.length, total: story.episodes.length })
+  else meta = t('menu.folderSeason', { released, total: story.episodes.length })
 
   return button(
     `folder${available ? '' : ' folder--soon'}`,
     [
-      h('div', { class: 'folder__tab', text: `Дело № ${story.caseNo}` }),
+      h('div', { class: 'folder__tab', text: t('common.caseNo', { no: story.caseNo }) }),
       h('div', { class: 'folder__body' }, [
         h('div', { class: 'folder__title', text: story.title }),
         h('div', { class: 'folder__hero', text: story.hero }),
@@ -77,10 +78,10 @@ function folderCard(story: StoryMeta, nav: Nav): HTMLElement {
           h('span', { text: meta }),
         ]),
         available && p?.sceneId && !p.completed.includes(p.episode) ? progressBar(p.pct) : null,
-        available ? null : h('div', { class: 'stamp', text: 'В разработке' }),
+        available ? null : h('div', { class: 'stamp', text: t('menu.stampInDev') }),
       ]),
     ],
-    () => (available ? nav.toStory(story.id) : toast(`«${story.title}» — в разработке`)),
+    () => (available ? nav.toStory(story.id) : toast(t('menu.storyInDevToast', { story: story.title }))),
     { style: `--tint:${story.tint}`, 'aria-label': `${story.title}, ${story.hero}. ${meta}` },
   )
 }

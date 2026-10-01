@@ -24,6 +24,7 @@ import {
 import { hapticSelect, hapticTap, hapticSuccess } from '../telegram'
 import { h, button, icon } from './dom'
 import { openSheet, confirmDialog, closeTopOverlay, hasOverlay } from './overlay'
+import { t } from '../i18n'
 
 /** Защита от двойного тапа: сразу после смены экрана тапы игнорируются, мс */
 const TAP_GUARD_MS = 350
@@ -84,7 +85,7 @@ export function renderScene(root: HTMLElement, scene: Scene, _sceneId: string, n
 
 function hud(nav: Nav): HTMLElement {
   return h('div', { class: 'hud' }, [
-    button('icon-btn icon-btn--glass', [icon('menu')], () => openPauseMenu(nav), { 'aria-label': 'Меню' }),
+    button('icon-btn icon-btn--glass', [icon('menu')], () => openPauseMenu(nav), { 'aria-label': t('common.menu') }),
   ])
 }
 
@@ -96,19 +97,22 @@ function openPauseMenu(nav: Nav): void {
 
   openSheet({
     title: story?.title ?? '',
-    subtitle: `${story?.episodes.find((e) => e.n === info.episode)?.title ?? `Эпизод ${info.episode}`} · ${p?.pct ?? 0}%`,
+    subtitle: t('reading.pauseSubtitle', {
+      episode: story?.episodes.find((e) => e.n === info.episode)?.title ?? t('common.episodeN', { n: info.episode }),
+      pct: p?.pct ?? 0,
+    }),
     actions: [
-      { label: 'Продолжить чтение', icon: 'play', variant: 'primary', onClick: () => closeTopOverlay() },
-      { label: 'К истории', icon: 'book', onClick: () => nav.toStory(info.storyId) },
+      { label: t('reading.continueReading'), icon: 'play', variant: 'primary', onClick: () => closeTopOverlay() },
+      { label: t('common.toStory'), icon: 'book', onClick: () => nav.toStory(info.storyId) },
       {
-        label: 'Начать эпизод сначала',
+        label: t('common.restartEpisode'),
         icon: 'restart',
         variant: 'danger',
         onClick: () =>
           confirmDialog({
-            title: 'Начать эпизод сначала?',
-            text: 'Выборы этого эпизода сбросятся. Прочитанное в прошлых эпизодах сохранится.',
-            confirm: 'Начать сначала',
+            title: t('reading.restartTitle'),
+            text: t('reading.restartText'),
+            confirm: t('reading.restartConfirm'),
             danger: true,
             onConfirm: () => {
               closeTopOverlay() // шторка паузы
@@ -123,18 +127,18 @@ function openPauseMenu(nav: Nav): void {
 
 function textSizeControl(): HTMLElement {
   const sizes: [TextSize, string][] = [
-    ['s', 'Мельче'],
-    ['m', 'Обычный'],
-    ['l', 'Крупнее'],
+    ['s', t('reading.textSizeS')],
+    ['m', t('reading.textSizeM')],
+    ['l', t('reading.textSizeL')],
   ]
-  const group = h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': 'Размер текста' })
+  const group = h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': t('reading.textSize') })
   const render = (): void => {
     const currentSize = getTextSize()
     group.replaceChildren(
       ...sizes.map(([size, label]) =>
         button(
           `segmented__item segmented__item--${size}${size === currentSize ? ' is-active' : ''}`,
-          [h('span', { class: 'segmented__glyph', text: 'А' }), h('span', { class: 'segmented__label', text: label })],
+          [h('span', { class: 'segmented__glyph', text: t('reading.textSizeGlyph') }), h('span', { class: 'segmented__label', text: label })],
           () => {
             setTextSize(size)
             applyTextSize(size)
@@ -146,7 +150,7 @@ function textSizeControl(): HTMLElement {
     )
   }
   render()
-  return h('div', { class: 'sheet__extra' }, [h('div', { class: 'sheet__label', text: 'Размер текста' }), group])
+  return h('div', { class: 'sheet__extra' }, [h('div', { class: 'sheet__label', text: t('reading.textSize') }), group])
 }
 
 // ---------------------------------------------------------------------------
@@ -225,7 +229,7 @@ function renderChoice(stage: HTMLElement, scene: Scene): void {
 
   const { dialog, panel } = dialogPanel(scene)
   dialog.append(h('div', { class: 'dialog__more', 'aria-hidden': 'true' }, [icon('back', 'icon icon--down')]))
-  stage.append(h('div', { class: 'choice-zone' }, [h('div', { class: 'choices', role: 'group', 'aria-label': 'Выбор' }, buttons)]), dialog)
+  stage.append(h('div', { class: 'choice-zone' }, [h('div', { class: 'choices', role: 'group', 'aria-label': t('reading.choiceGroup') }, buttons)]), dialog)
   watchOverflow(panel, dialog)
   // Длинный вопрос: тап по панели докручивает текст (листать некуда — ждём выбора)
   panel.addEventListener('click', () => {
@@ -253,20 +257,20 @@ function choiceButton(choice: Choice, onClick: () => void): HTMLButtonElement {
 // ---------------------------------------------------------------------------
 
 function renderPush(stage: HTMLElement, scene: Scene): void {
-  const sender = scene.sender ?? 'Уведомление'
+  const sender = scene.sender ?? t('reading.pushSender')
   stage.append(
     h('div', { class: 'push' }, [
       h('div', { class: 'push__head' }, [
         h('span', { class: 'push__icon', text: sender.charAt(0) }),
         h('span', { class: 'push__sender', text: sender }),
-        h('span', { class: 'push__time', text: scene.time ?? 'сейчас' }),
+        h('span', { class: 'push__time', text: scene.time ?? t('reading.pushTime') }),
       ]),
       h('div', { class: 'push__text', text: scene.text }),
     ]),
   )
 
   if (!scene.next) return
-  stage.append(h('div', { class: 'tap-hint', text: 'Нажми, чтобы продолжить' }))
+  stage.append(h('div', { class: 'tap-hint', text: t('reading.tapHint') }))
   stage.classList.add('stage--tappable')
   const go = (): void => {
     if (!tapAllowed()) return
@@ -289,23 +293,23 @@ function renderEnd(stage: HTMLElement, scene: Scene, nav: Nav): void {
   stage.append(
     h('div', { class: 'end-card' }, [
       h('div', { class: 'end-card__seal', 'aria-hidden': 'true' }, [icon('check')]),
-      h('div', { class: 'eyebrow', text: story ? `Дело № ${story.caseNo} · ${story.title}` : '' }),
-      h('div', { class: 'end-card__title', text: `Эпизод ${info.episode} пройден` }),
+      h('div', { class: 'eyebrow', text: story ? t('reading.endEyebrow', { no: story.caseNo, story: story.title }) : '' }),
+      h('div', { class: 'end-card__title', text: t('reading.endTitle', { n: info.episode }) }),
       scene.text ? h('div', { class: 'end-card__text', text: scene.text }) : null,
       nextMeta && !nextReady
         ? h('div', { class: 'end-card__next' }, [
             icon('lock', 'icon icon--sm'),
-            h('span', { text: `${nextMeta.title} — скоро` }),
+            h('span', { text: t('reading.endNextSoon', { episode: nextMeta.title }) }),
           ])
         : null,
       h('div', { class: 'end-card__actions' }, [
         nextReady
-          ? button('btn btn--primary btn--block btn--lg', [icon('play'), h('span', { text: `Читать · ${nextMeta!.title}` })], () =>
+          ? button('btn btn--primary btn--block btn--lg', [icon('play'), h('span', { text: t('reading.endReadNext', { episode: nextMeta!.title }) })], () =>
               nav.read(info.storyId, nextMeta!.n),
             )
-          : button('btn btn--primary btn--block btn--lg', [icon('book'), h('span', { text: 'К истории' })], () => nav.toStory(info.storyId)),
-        nextReady ? button('btn btn--secondary btn--block', 'К истории', () => nav.toStory(info.storyId)) : null,
-        button('btn btn--ghost btn--block', [icon('restart'), h('span', { text: 'Начать эпизод сначала' })], () => {
+          : button('btn btn--primary btn--block btn--lg', [icon('book'), h('span', { text: t('common.toStory') })], () => nav.toStory(info.storyId)),
+        nextReady ? button('btn btn--secondary btn--block', t('common.toStory'), () => nav.toStory(info.storyId)) : null,
+        button('btn btn--ghost btn--block', [icon('restart'), h('span', { text: t('common.restartEpisode') })], () => {
           if (!tapAllowed()) return
           hapticTap()
           restartEpisode()
