@@ -7,7 +7,8 @@
     "dev": "vite",
     "dev:server": "PORT=3000 node server/index.mjs",
     "build": "tsc && vite build",
-    "check:ui": "npm run build && node scripts/check-ui.mjs",
+    "check:rules": "node scripts/check-rules.mjs",
+    "check:ui": "npm run check:rules && npm run build && node scripts/check-ui.mjs",
     "preview": "vite preview",
     "start": "node server/index.mjs"
   },
