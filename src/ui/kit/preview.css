@@ -1,0 +1,195 @@
+/* Стенд компонентов (kit.html): сетка образцов с подписями. В сборку игры не входит. */
+
+.kit-title {
+  font: 600 14px/1.2 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+
+.kit-intro {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-2);
+}
+
+.kit-controls {
+  margin-top: 14px;
+}
+
+/* --- Разделы и строки образцов --- */
+.kit-section {
+  margin-top: 32px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+}
+.kit-section__title {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1.15;
+}
+.kit-section__note {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.kit-row {
+  margin-top: 18px;
+}
+.kit-row__title {
+  margin: 18px 0 8px;
+  font: 11px/1.3 var(--font-mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+.kit-row > .kit-row__title {
+  margin-top: 0;
+}
+
+.kit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+  gap: 8px;
+}
+
+/* Чипы шире кнопок-иконок: ячейка по чипу, а не наоборот */
+.kit-grid--wide {
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+}
+
+/* Образец: компонент + подпись состояния */
+.kit-spec {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+}
+.kit-spec--wide {
+  grid-column: span 2;
+}
+.kit-spec__stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 100%;
+  min-height: 44px;
+}
+.kit-spec__caption {
+  font: 11px/1.3 var(--font-mono);
+  text-align: center;
+  color: var(--muted);
+}
+
+/* Поверх арта: подложка вместо картинки сцены — для вида glass */
+.kit-grid--art {
+  padding: 8px;
+  border-radius: var(--radius);
+  background: linear-gradient(135deg, var(--kraft), var(--stamp) 55%, var(--surface-3));
+}
+.kit-grid--art .kit-spec {
+  border-color: transparent;
+}
+.kit-grid--art .kit-spec__caption {
+  color: var(--text);
+}
+
+/* Подложки для обводки бейджа */
+.kit-surface--bg {
+  --ui-badge-ring: var(--bg);
+  background: var(--bg);
+}
+.kit-surface--surface {
+  --ui-badge-ring: var(--surface);
+  background: var(--surface);
+}
+.kit-surface--sheet {
+  --ui-badge-ring: var(--sheet);
+  background: var(--sheet);
+}
+
+/* Бейдж 0: сам бейдж скрыт, рядом — пометка */
+.kit-zero {
+  display: inline-flex;
+  align-items: center;
+}
+.kit-empty {
+  padding: 2px 8px;
+  border: 1px dashed var(--line-2);
+  border-radius: 999px;
+  font: 11px/1.3 var(--font-mono);
+  color: var(--muted);
+}
+
+/* Узкая ячейка — чип с длинным текстом обрезается */
+.kit-narrow {
+  width: 150px;
+  max-width: 100%;
+}
+
+/* Хедер — пример шага 4.1 */
+.kit-mock-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 56px;
+  padding: 0 12px 0 16px;
+  border-radius: var(--radius);
+  background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+.kit-mock-header__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 600;
+}
+
+/* Строки списка с бейджем справа */
+.kit-list {
+  --ui-badge-ring: var(--surface);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.kit-list__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 48px;
+  padding: 0 14px;
+  font-size: 15px;
+}
+.kit-list__row + .kit-list__row {
+  border-top: 1px solid var(--line);
+}
+
+/* Живой пример */
+.kit-live {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px dashed var(--line-2);
+  border-radius: var(--radius);
+}
+.kit-readout {
+  width: 100%;
+  font: 12px/1.5 var(--font-mono);
+  color: var(--text-2);
+}
+
+/* Подсветка зон касания: квадрат 44×44 у кнопки-иконки, полоса 44 px у чипа */
+.app-shell[data-kit-hit] .ui-iconbtn,
+.app-shell[data-kit-hit] .ui-chip:not([data-kind='static']) {
+  box-shadow: inset 0 0 0 1px var(--ok);
+}

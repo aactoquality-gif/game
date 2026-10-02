@@ -1,0 +1,163 @@
+/* ==========================================================================
+   Чип — src/ui/kit/chip.ts
+   Нажимаемый чип: кнопка высотой 44 px (зона касания), видна «пилюля» 32 px (::before);
+   отрицательные поля по вертикали — в раскладке чип занимает 32 px.
+   Метка (data-kind="static") — 28 px, без зоны касания.
+   Цвета состояний — приватные переменные --_bg, --_tint, --_border, --_color.
+   color-mix — только внутри @supports. Порядок блоков: вид → выбран → наведение → нажатие → фокус → недоступен.
+   ========================================================================== */
+
+.ui-chip {
+  --ui-chip-h: 32px;
+  --_bg: var(--surface-2);
+  --_tint: transparent;
+  --_border: var(--line-2);
+  --_color: var(--text-2);
+  --ui-badge-ring: transparent; /* счётчик внутри чипа — без обводки */
+
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  min-width: 44px;
+  max-width: 100%;
+  min-height: 44px;
+  margin-block: calc((var(--ui-chip-h) - 44px) / 2);
+  padding: 0 12px;
+  color: var(--_color); /* без border-radius: нажимается вся полоса, а не скруглённая */
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: left;
+  vertical-align: middle;
+  transition: transform 0.12s ease, color 0.15s ease;
+}
+
+/* Видимая «пилюля» */
+.ui-chip::before {
+  content: '';
+  position: absolute;
+  inset: calc((44px - var(--ui-chip-h)) / 2) 0;
+  border: 1px solid var(--_border);
+  border-radius: 999px;
+  background-color: var(--_bg);
+  background-image: linear-gradient(var(--_tint), var(--_tint));
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* Содержимое — поверх «пилюли» */
+.ui-chip > .ui-chip__icon,
+.ui-chip > .ui-chip__check,
+.ui-chip > .ui-chip__text,
+.ui-chip > .ui-chip__count {
+  position: relative;
+}
+
+.ui-chip > .ui-chip__icon,
+.ui-chip > .ui-chip__check {
+  width: 16px;
+  height: 16px;
+  margin-left: -2px;
+}
+
+.ui-chip__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-chip > .ui-chip__count {
+  margin-right: -4px;
+}
+
+/* --- Вид ------------------------------------------------------------------ */
+/* Метка: ниже, мельче, без рамки и зоны касания */
+.ui-chip[data-kind='static'] {
+  --ui-chip-h: 28px;
+  --_border: transparent;
+  min-width: 0;
+  min-height: var(--ui-chip-h);
+  margin-block: 0;
+  padding: 0 10px;
+  font-size: 12px;
+}
+.ui-chip[data-kind='static']::before {
+  inset: 0;
+}
+
+/* Действие: иконка латунная — «★ 120», «+ Добавить» */
+.ui-chip[data-kind='action'] {
+  --_color: var(--text);
+}
+.ui-chip[data-kind='action'] > .ui-chip__icon {
+  color: var(--brass);
+}
+
+/* Фильтр: галочка вместо иконки — только у выбранного */
+.ui-chip > .ui-chip__check {
+  display: none;
+}
+
+/* --- Выбран (фильтр) ------------------------------------------------------ */
+.ui-chip[aria-pressed='true'] {
+  --_border: var(--brass);
+  --_color: var(--brass-hi);
+}
+.ui-chip[aria-pressed='true'] > .ui-chip__check {
+  display: block;
+}
+.ui-chip[aria-pressed='true'] > .ui-chip__icon {
+  display: none;
+}
+.ui-chip[aria-pressed='true'] > .ui-chip__count {
+  background: var(--brass);
+  color: var(--brass-ink);
+}
+
+@supports (color: color-mix(in srgb, red, blue)) {
+  .ui-chip[aria-pressed='true'] {
+    --_tint: color-mix(in srgb, var(--brass) 16%, transparent);
+    --_border: color-mix(in srgb, var(--brass) 55%, transparent);
+  }
+}
+
+/* --- Наведение — только мышью --- */
+@media (hover: hover) {
+  .ui-chip[data-kind='action']:not(:disabled):hover,
+  .ui-chip[data-kind='filter']:not(:disabled):hover {
+    --_bg: var(--surface-3);
+  }
+}
+
+/* --- Нажатие --- */
+.ui-chip[data-kind='action']:not(:disabled):active,
+.ui-chip[data-kind='filter']:not(:disabled):active {
+  --_bg: var(--surface-3);
+  transform: scale(0.97);
+}
+
+/* --- Фокус с клавиатуры: кольцо вокруг «пилюли» --- */
+.ui-chip:focus-visible {
+  outline: none;
+}
+.ui-chip:focus-visible::before {
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 4px var(--brass);
+}
+
+/* --- Недоступен --- */
+.ui-chip:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* --- Ряд чипов: перенос; между рядами 12 px — зоны касания соседних рядов не перекрываются --- */
+.ui-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 8px;
+}
