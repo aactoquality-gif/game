@@ -1,0 +1,85 @@
+/* ==========================================================================
+   Нижняя шторка — src/ui/kit/sheet.ts (открывает overlay.ts: openBottomSheet)
+   Слой и затемнение — общие классы слоёв из style.css (.layer, .layer--sheet, .scrim).
+   Шапка закреплена, тело прокручивается: шторка не выше кадра минус отступ сверху.
+   Во время жеста сдвиг приходит переменной --ui-sheet-drag, анимация выключена (data-dragging).
+   ========================================================================== */
+
+.ui-sheet {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 560px;
+  /* слой = весь кадр: шторка оставляет сверху «чёлку» / кнопки Telegram и полоску затемнения */
+  max-height: calc(100% - var(--top) - 24px);
+  margin: 0 auto;
+  border-top: 1px solid var(--line-2);
+  border-radius: 22px 22px 0 0;
+  background: var(--sheet);
+  outline: none;
+  transform: translateY(100%);
+  transition: transform 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.layer--open > .ui-sheet {
+  transform: translateY(var(--ui-sheet-drag, 0px));
+}
+.ui-sheet[data-dragging] {
+  transition: none;
+}
+
+/* --- Шапка: за неё тянут вниз --- */
+.ui-sheet__grab {
+  flex: none;
+  padding: 8px var(--gap) 0;
+  touch-action: none; /* жест — наш, а не прокрутка страницы */
+  cursor: grab;
+}
+.ui-sheet[data-dragging] > .ui-sheet__grab {
+  cursor: grabbing;
+}
+
+.ui-sheet__grip {
+  width: 36px;
+  height: 4px;
+  margin: 0 auto 10px;
+  border-radius: 2px;
+  background: var(--line-2);
+}
+
+.ui-sheet__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding-bottom: 16px;
+}
+
+.ui-sheet__titles {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.ui-sheet__title {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.ui-sheet__subtitle {
+  margin-top: 2px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+/* --- Тело: прокручивается, низ — над home bar --- */
+.ui-sheet__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 var(--gap) calc(var(--safe-bottom) + var(--gap));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}

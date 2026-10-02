@@ -1,0 +1,59 @@
+/* ==========================================================================
+   Диалог подтверждения — src/ui/kit/confirm-dialog.ts (открывает overlay.ts: confirmAction)
+   Слой и затемнение — общие классы слоёв из style.css (.layer, .layer--dialog, .scrim).
+   Длинное пояснение прокручивается внутри, кнопки всегда видны.
+   ========================================================================== */
+
+.ui-dialog {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 340px;
+  max-height: 100%;
+  padding: 22px 20px 16px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-l);
+  background: var(--sheet);
+  box-shadow: 0 20px 50px var(--scrim);
+  outline: none;
+  opacity: 0;
+  transform: scale(0.96);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+.layer--open > .ui-dialog {
+  opacity: 1;
+  transform: none;
+}
+
+.ui-dialog__title {
+  flex: none;
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.ui-dialog__text {
+  min-height: 0;
+  margin-top: 8px;
+  overflow-y: auto;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+
+/* Две кнопки в ряд; не влезают — встают друг под другом, действие сверху */
+.ui-dialog__actions {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap-reverse;
+  gap: 10px;
+  margin-top: 18px;
+}
+.ui-dialog__actions > .btn {
+  flex: 1 1 120px;
+  padding: 0 10px;
+  font-size: 15px;
+}
