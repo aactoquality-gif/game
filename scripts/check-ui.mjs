@@ -758,12 +758,12 @@ async function runLateLoad(browser, baseUrl) {
   return res
 }
 
-/** Сервер аналитики недоступен (503), событий больше 100 → после восстановления всё доходит пачками ≤ 100, без потерь и дублей */
+/** Сервер аналитики отвечает 5xx, событий больше 100 → после восстановления всё доходит пачками ≤ 100, без потерь и дублей */
 async function runAnalyticsRetry(browser, baseUrl) {
   const vp = VIEWPORTS.find((v) => v.id === '390')
   const { res, context, page, expect, fail } = await openCase(browser, vp, 'browser', {
     id: '390-browser-analytics-retry',
-    label: 'аналитика: 503 и больше 100 событий → повтор пачками ≤ 100',
+    label: 'аналитика: 5xx и больше 100 событий → повтор пачками ≤ 100',
     allowFailed: ['/api/events'],
   })
   try {
@@ -772,11 +772,11 @@ async function runAnalyticsRetry(browser, baseUrl) {
     let down = true
     let refused = 0
     const batches = []
-    // Ответы как у настоящего сервера: недоступен — 503; пачка больше 100 — 400 целиком
+    // Ответы как у настоящего сервера: недоступен — 5xx (503 и нестандартный 520 по очереди); пачка больше 100 — 400 целиком
     await page.route('**/api/events', (route) => {
       if (down) {
         refused++
-        return route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"unavailable"}' })
+        return route.fulfill({ status: refused % 2 ? 503 : 520, contentType: 'application/json', body: '{"error":"unavailable"}' })
       }
       let events = []
       try {
@@ -801,14 +801,14 @@ async function runAnalyticsRetry(browser, baseUrl) {
       while (!cond() && Date.now() - start < ms) await page.waitForTimeout(200)
       return cond()
     }
-    expect(await waitUntil(() => refused > refusedBefore, 15000), 'сервер недоступен: игра пробует отправить очередь (получает 503)')
+    expect(await waitUntil(() => refused > refusedBefore + 1, 25000), 'сервер недоступен: игра повторяет отправку очереди (получает 503 и 520)')
 
     down = false
     const sizeTaps = () => batches.flat().filter((e) => e.event === 'ui_tap' && e.data?.target === 'pause.textSize')
     await waitUntil(() => sizeTaps().length >= TAPS, 30000)
     expect(batches.every((b) => b.length <= SERVER_MAX), `каждая пачка — не больше ${SERVER_MAX} событий (${batches.map((b) => b.length).join(', ')})`)
     expect(batches.length >= 2, 'больше 100 событий уходят несколькими пачками')
-    expect(sizeTaps().length === TAPS, `после 503 доставлены все нажатия, без потерь и дублей (${sizeTaps().length} из ${TAPS})`)
+    expect(sizeTaps().length === TAPS, `после 5xx доставлены все нажатия, без потерь и дублей (${sizeTaps().length} из ${TAPS})`)
     const keys = batches.flat().map((e) => `${e.ts}|${e.event}|${e.data?.target ?? ''}|${e.data?.value ?? ''}`)
     expect(new Set(keys).size === keys.length, 'ни одно событие не пришло дважды')
   } catch (error) {

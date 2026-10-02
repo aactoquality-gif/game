@@ -49,8 +49,8 @@ const FLUSH_INTERVAL_MS = 10_000
 const MAX_BUFFER = 500
 /** Пачка — не больше, чем принимает сервер (MAX_EVENTS в server/index.mjs): пачку больше он отклоняет целиком */
 const MAX_BATCH = 100
-/** Ответы сервера, после которых пачку стоит отправить ещё раз: перегрузка, сбой, недоступность */
-const RETRY_STATUSES = [408, 429, 500, 502, 503, 504]
+/** Ответы сервера, после которых пачку стоит отправить ещё раз: таймаут и перегрузка; плюс любой 5xx */
+const RETRY_STATUSES = [408, 429]
 /** Запрос без ответа дольше — считаем неудачным и возвращаем пачку в очередь */
 const SEND_TIMEOUT_MS = 20_000
 
@@ -176,7 +176,7 @@ function flush(useBeacon: boolean): void {
 
 /**
  * Пачка одним запросом. true — сервер её принял или отклонил окончательно (повтор не поможет);
- * false — нет сети, нет ответа или сервер временно недоступен (RETRY_STATUSES).
+ * false — нет сети, нет ответа или сервер временно недоступен (RETRY_STATUSES, любой 5xx).
  */
 function post(events: AnalyticsEvent[]): Promise<boolean> {
   const controller = new AbortController()
@@ -188,7 +188,7 @@ function post(events: AnalyticsEvent[]): Promise<boolean> {
     keepalive: true,
     signal: controller.signal,
   })
-    .then((res) => res.ok || !RETRY_STATUSES.includes(res.status))
+    .then((res) => res.ok || (res.status < 500 && !RETRY_STATUSES.includes(res.status)))
     .catch(() => false)
     .finally(() => clearTimeout(timer))
 }

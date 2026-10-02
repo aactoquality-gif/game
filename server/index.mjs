@@ -294,7 +294,14 @@ function handleRawEvents(url, res) {
     'Content-Disposition': 'attachment; filename="events.jsonl"',
     'Cache-Control': 'no-store',
   }
-  if (!existsSync(EVENTS_FILE)) {
+  // Файла ещё нет — пустая выгрузка; файл есть, но не читается (права, каталог) — 500, а не пустой 200
+  try {
+    statSync(EVENTS_FILE)
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      console.error(`Не удалось проверить ${EVENTS_FILE}: ${err.code || err.message}`)
+      return sendJson(res, 500, { error: 'storage error' })
+    }
     res.writeHead(200, headers)
     return res.end()
   }
