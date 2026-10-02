@@ -493,6 +493,18 @@ async function runCase(browser, baseUrl, apiLog, vp, mode) {
     remember(s)
     expect(s.text !== beforePick, 'после выбора открылся другой экран')
 
+    // Кнопки поверх сцены и обложки — кнопки-иконки kit: зона касания 44×44, видимый круг 40, подпись для скринридера
+    const kitIconButton = (selector) =>
+      page.evaluate((sel) => {
+        const b = document.querySelector(sel)
+        if (!b?.classList.contains('ui-iconbtn') || !b.getAttribute('aria-label')) return false
+        const r = b.getBoundingClientRect()
+        const c = getComputedStyle(b, '::before')
+        const circle = r.width - parseFloat(c.left) - parseFloat(c.right)
+        return Math.round(r.width) === 44 && Math.round(r.height) === 44 && Math.round(circle) === 40
+      }, selector)
+    expect(await kitIconButton('.hud button'), 'чтение: кнопка меню — кнопка-иконка kit (зона касания 44×44, круг 40, подпись)')
+
     // 3. Меню паузы и «Назад» закрывает сначала его
     await page.locator('.hud button').first().click()
     await waitFor((x) => x.overlay, 'меню паузы')
@@ -538,6 +550,8 @@ async function runCase(browser, baseUrl, apiLog, vp, mode) {
     await audit('story')
     app = await readAppState(page)
     expect(app.ui.route.name === 'story' && typeof app.ui.route.storyId === 'string', 'состояние: маршрут — история')
+    if (mode === 'browser') expect(await kitIconButton('.btn-back'), 'история: своя «Назад» — кнопка-иконка kit (зона касания 44×44, круг 40, подпись)')
+    else expect(!(await page.evaluate(() => !!document.querySelector('.btn-back'))), 'Telegram: на экране истории нет своей «Назад» — только системная')
     if (mode === 'browser') await page.locator('.btn-back').click()
     else await back()
     s = await waitFor((x) => x.screen === 'menu', 'главное меню')

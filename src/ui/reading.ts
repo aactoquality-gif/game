@@ -26,6 +26,7 @@ import { h, button, icon } from './dom'
 import { openSheet, confirmDialog, closeTopOverlay, hasOverlay } from './overlay'
 import { t } from '../i18n'
 import { segmented } from './kit/segmented'
+import { iconButton } from './kit/icon-button'
 
 /** Защита от двойного тапа: сразу после смены экрана тапы игнорируются, мс */
 const TAP_GUARD_MS = 350
@@ -86,7 +87,7 @@ export function renderScene(root: HTMLElement, scene: Scene, _sceneId: string, n
 
 function hud(nav: Nav): HTMLElement {
   return h('div', { class: 'hud' }, [
-    button('icon-btn icon-btn--glass', [icon('menu')], () => openPauseMenu(nav), { 'aria-label': t('common.menu') }, { target: 'reading.pause' }),
+    iconButton({ icon: 'menu', label: t('common.menu'), onClick: () => openPauseMenu(nav), tap: { target: 'reading.pause' }, variant: 'glass' }),
   ])
 }
 
