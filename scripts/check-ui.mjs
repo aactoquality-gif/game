@@ -225,7 +225,7 @@ function auditLayout({ minTap, safeBottom, zSelectors }) {
     if (r.left < -1 || r.right > vw + 1) cutOff.push(label(el))
   }
   // Блоки текста тоже: экраны обрезают лишнее (overflow: hidden), и документ при этом не скроллится
-  for (const el of document.querySelectorAll('.panel, .choices, .push, .end-card, .continue-card, .folder, .episodes, .sheet, .dialog-box, .ui-sheet, .ui-dialog')) {
+  for (const el of document.querySelectorAll('.panel, .choices, .push, .end-card, .continue-card, .folder, .episodes, .ui-sheet, .ui-dialog')) {
     if (!visible(el)) continue
     const r = el.getBoundingClientRect()
     if (r.left < -1 || r.right > vw + 1) cutOff.push(label(el))
