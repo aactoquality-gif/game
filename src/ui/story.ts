@@ -12,6 +12,19 @@ import { confirmDialog, toast } from './overlay'
 import { progressBar } from './menu'
 import type { Tap } from '../tracking'
 import { t } from '../i18n'
+import { store } from '../store'
+import { iconButton } from './kit/icon-button'
+
+/**
+ * Своя «Назад» поверх обложки — только в браузере: в Telegram её заменяет системная кнопка в шапке.
+ * Класс btn-back остаётся — по нему кнопку находит check:ui.
+ */
+function backButton(nav: Nav): HTMLButtonElement | null {
+  if (store.get().platform.kind !== 'browser') return null
+  const btn = iconButton({ icon: 'back', label: t('common.back'), onClick: () => nav.toMenu(), tap: { target: 'story.back' }, variant: 'glass' })
+  btn.classList.add('btn-back')
+  return btn
+}
 
 export function renderStory(root: HTMLElement, storyId: string, nav: Nav): void {
   const story = getStory(storyId)
@@ -44,7 +57,7 @@ export function renderStory(root: HTMLElement, storyId: string, nav: Nav): void 
   }
 
   const screen = h('div', { class: 'screen screen--story' }, [
-    h('div', { class: 'topbar' }, [button('icon-btn btn-back', [icon('back')], () => nav.toMenu(), { 'aria-label': t('common.back') }, { target: 'story.back' })]),
+    h('div', { class: 'topbar' }, [backButton(nav)]),
     h('div', { class: 'story-cover', style: `--tint:${story.tint}` }, [
       h('div', { class: 'story-cover__case', text: t('common.caseNo', { no: story.caseNo }) }),
       h('h1', { class: 'story-cover__title', text: story.title }),
