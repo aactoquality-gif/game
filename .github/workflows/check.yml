@@ -1,0 +1,51 @@
+# Проверка каждого PR в main (прод): правила, сборка, интерфейс в браузере.
+# Отчёт со скриншотами — артефакт check-ui-report у прогона (Actions → прогон → Artifacts).
+# Чтобы красная проверка не давала влить PR — защита ветки main с обязательной проверкой «check» (настройки репозитория).
+name: check
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # Сверка с продом в check:rules: id выборов, экранов и историй из origin/main
+      - name: Fetch main
+        run: git fetch --no-tags --depth=1 origin +refs/heads/main:refs/remotes/origin/main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: test:server
+        run: npm run test:server
+
+      - name: check:ui (check:rules + build + UI)
+        run: npm run check:ui
+        env:
+          CHROME_PATH: /usr/bin/google-chrome
+
+      - name: Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-ui-report
+          path: .checks/ui
+          if-no-files-found: ignore
+          retention-days: 14
