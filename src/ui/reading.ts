@@ -25,6 +25,7 @@ import { hapticSelect, hapticTap, hapticSuccess } from '../telegram'
 import { h, button, icon } from './dom'
 import { openSheet, confirmDialog, closeTopOverlay, hasOverlay } from './overlay'
 import { t } from '../i18n'
+import { segmented } from './kit/segmented'
 
 /** Защита от двойного тапа: сразу после смены экрана тапы игнорируются, мс */
 const TAP_GUARD_MS = 350
@@ -128,32 +129,26 @@ function openPauseMenu(nav: Nav): void {
   })
 }
 
+/** Размер текста — сегменты из src/ui/kit: стрелки клавиатуры, в порядке Tab — только выбранный */
 function textSizeControl(): HTMLElement {
-  const sizes: [TextSize, string][] = [
-    ['s', t('reading.textSizeS')],
-    ['m', t('reading.textSizeM')],
-    ['l', t('reading.textSizeL')],
+  // Знак «А» трёх кеглей — как будет выглядеть текст
+  const sizes: [TextSize, string, number][] = [
+    ['s', t('reading.textSizeS'), 15],
+    ['m', t('reading.textSizeM'), 19],
+    ['l', t('reading.textSizeL'), 24],
   ]
-  const group = h('div', { class: 'segmented', role: 'radiogroup', 'aria-label': t('reading.textSize') })
-  const render = (): void => {
-    const currentSize = getTextSize()
-    group.replaceChildren(
-      ...sizes.map(([size, label]) =>
-        button(
-          `segmented__item segmented__item--${size}${size === currentSize ? ' is-active' : ''}`,
-          [h('span', { class: 'segmented__glyph', text: t('reading.textSizeGlyph') }), h('span', { class: 'segmented__label', text: label })],
-          () => {
-            setTextSize(size)
-            applyTextSize(size)
-            render()
-          },
-          { role: 'radio', 'aria-checked': String(size === currentSize) },
-          { target: 'pause.textSize', value: size },
-        ),
-      ),
-    )
-  }
-  render()
+  const group = segmented({
+    label: t('reading.textSize'),
+    options: sizes.map(([value, label, glyphSize]) => ({ value, label, glyph: t('reading.textSizeGlyph'), glyphSize })),
+    value: getTextSize(),
+    tap: 'pause.textSize',
+    onChange: (value) => {
+      const size = sizes.find(([s]) => s === value)?.[0]
+      if (!size) return
+      setTextSize(size)
+      applyTextSize(size)
+    },
+  })
   return h('div', { class: 'sheet__extra' }, [h('div', { class: 'sheet__label', text: t('reading.textSize') }), group])
 }
 

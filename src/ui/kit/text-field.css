@@ -1,0 +1,151 @@
+/* ==========================================================================
+   Поле ввода — src/ui/kit/text-field.ts
+   Подпись → поле 48 px → подсказка или ошибка. scroll-margin блока — запас, с которым каркас
+   докручивает поле над клавиатурой: сверху видна подпись, снизу — подсказка и воздух.
+   Шрифт ввода 16 px — меньше нельзя: iOS приблизит страницу при фокусе.
+   ========================================================================== */
+
+.ui-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  scroll-margin-block: 16px 24px;
+}
+
+.ui-field__top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ui-field__label {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text-2);
+}
+.ui-field__counter {
+  flex: none;
+  font: 12px/1.3 var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+/* --- Рамка поля: в фокусе — латунная, с ошибкой — красная --- */
+.ui-field__box {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 48px;
+  padding: 0 8px 0 14px;
+  border: 1px solid var(--line-2);
+  border-radius: 12px;
+  background: var(--surface-2);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ui-field__input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 46px;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  caret-color: var(--brass);
+  font: 16px/1.25 var(--font-ui);
+  -webkit-appearance: none;
+  appearance: none;
+}
+.ui-field__input::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+/* Крестик поиска браузера — свой крестик «Очистить» у поля */
+.ui-field__input::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  appearance: none;
+}
+/* Автозаполнение Chrome / Safari красит фон в жёлтый — оставляем свой */
+.ui-field__input:-webkit-autofill {
+  -webkit-text-fill-color: var(--text);
+  box-shadow: inset 0 0 0 100px var(--surface-2);
+  caret-color: var(--brass);
+}
+
+/* Крестик «Очистить»: пустое поле — без крестика (hidden перебил бы display компонента) */
+.ui-field__clear[hidden] {
+  display: none;
+}
+
+.ui-field__hint {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.ui-field__error {
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--danger);
+}
+.ui-field__error:empty {
+  display: none;
+}
+
+/* Низкий кадр (телефон боком с клавиатурой): запас при докрутке меньше — поле и подсказка влезают */
+@container app (max-height: 340px) {
+  .ui-field {
+    scroll-margin-block: 8px 12px;
+  }
+}
+
+/* --- Промокод: заглавные, моноширинный, с разрядкой --- */
+.ui-field[data-kind='code'] .ui-field__input {
+  font-family: var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* --- Наведение — только мышью --- */
+@media (hover: hover) {
+  .ui-field:not([data-disabled]):not([data-readonly]) > .ui-field__box:hover {
+    border-color: var(--text-2);
+  }
+}
+
+/* --- Фокус --- */
+.ui-field__box:focus-within {
+  border-color: var(--brass);
+  box-shadow: 0 0 0 1px var(--brass);
+}
+
+/* --- Ошибка: подсказку заменяет текст ошибки --- */
+.ui-field[data-invalid] > .ui-field__box {
+  border-color: var(--danger);
+}
+.ui-field[data-invalid] > .ui-field__box:focus-within {
+  box-shadow: 0 0 0 1px var(--danger);
+}
+.ui-field[data-invalid] > .ui-field__hint {
+  display: none;
+}
+
+/* --- Только чтение и недоступно --- */
+.ui-field[data-readonly] > .ui-field__box {
+  border-style: dashed;
+  background: transparent;
+}
+.ui-field[data-disabled] {
+  opacity: 0.45;
+}
+
+@supports (color: color-mix(in srgb, red, blue)) {
+  .ui-field__box:focus-within {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--brass) 25%, transparent);
+  }
+  .ui-field[data-invalid] > .ui-field__box:focus-within {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 25%, transparent);
+  }
+}

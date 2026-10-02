@@ -26,6 +26,7 @@ export const ru = {
   'common.retry': 'Попробовать снова',
   'common.cancel': 'Отмена',
   'common.close': 'Закрыть',
+  'common.clear': 'Очистить',
   'common.back': 'Назад',
   'common.menu': 'Меню',
   'common.soon': 'Скоро',
@@ -44,6 +45,7 @@ export const ru = {
   'kit.a11yCount': { one: '{label}: {count} новое', few: '{label}: {count} новых', many: '{label}: {count} новых', other: '{label}: {count} нового' },
   'kit.a11yDot': '{label}: есть новое',
   'kit.a11yLabel': '{label}: {badge}',
+  'kit.fieldCounter': '{count}/{max}',
 
   // Ошибки загрузки
   'error.game': 'Не удалось загрузить игру. Проверь подключение к интернету.',

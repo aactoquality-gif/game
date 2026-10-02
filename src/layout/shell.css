@@ -23,6 +23,9 @@
 
   position: fixed;
   inset: 0;
+  /* Экранная клавиатура (keyboard.ts): кадр — ровно в видимой части экрана над ней. Без клавиатуры — 0 */
+  top: var(--kb-top, 0px);
+  bottom: var(--kb-inset, 0px);
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto; /* minmax(0) — длинный контент не выдавит таббар */
   grid-template-columns: minmax(0, 1fr); /* длинная строка в хедере не раздует ширину кадра */
@@ -183,6 +186,15 @@
   justify-content: center;
   height: var(--shell-tabbar-h);
   padding-inline: max(var(--shell-pad-x), var(--safe-left)) max(var(--shell-pad-x), var(--safe-right));
+}
+
+/* --- Клавиатура открыта: таббар не нужен и не должен прыгать над клавиатурой;
+   отступ под home bar закрыт клавиатурой --- */
+.app-shell[data-keyboard='open'] {
+  --safe-bottom: 0px;
+}
+.app-shell[data-keyboard='open'] > .app-tabbar {
+  display: none;
 }
 
 /* --- Режим чтения и пустые зоны: хедер и таббар убираются, контент — на весь кадр --- */

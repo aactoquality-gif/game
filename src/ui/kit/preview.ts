@@ -25,8 +25,11 @@ import { iconButton, isIconButtonActive, setIconButtonActive, setIconButtonBadge
 import { actionChip, chip, chipGroup, filterChip, isChipSelected, setChipSelected } from './chip'
 import { closeTopOverlay, confirmAction, hasOverlay, onOverlayChange, openBottomSheet, setOverlayHost, type CloseReason } from '../overlay'
 import { setNativeBack } from '../../telegram'
+import { isSwitchChecked, switchRow } from './switch'
+import { segmented, segmentedValue, type SegmentOption } from './segmented'
+import { textField, type FieldKind, type TextFieldOptions } from './text-field'
 
-type Pseudo = 'hover' | 'active' | 'focus-visible'
+type Pseudo = 'hover' | 'active' | 'focus-visible' | 'focus-within'
 
 const demo = (value: string): Tap => ({ target: 'kit.demo', value })
 const noop = (): void => {}
@@ -36,7 +39,7 @@ const noop = (): void => {}
 // Обёртка @media (hover: hover) снимается — на стенде наведение видно и на сенсорном экране.
 // ---------------------------------------------------------------------------
 
-const PSEUDO_RE = /:(hover|active|focus-visible)(?![\w-])/g
+const PSEUDO_RE = /:(hover|active|focus-visible|focus-within)(?![\w-])/g
 
 function mirrorRules(rules: CSSRuleList, wrappers: readonly string[], out: string[]): void {
   for (const rule of Array.from(rules)) {
@@ -456,12 +459,232 @@ const overlaySection = section(
 )
 
 // ---------------------------------------------------------------------------
+// Переключатель и сегменты (шаг 2.3)
+// ---------------------------------------------------------------------------
+
+/** Состояние образца на элементе внутри компонента (сегмент, рамка поля), а не на нём самом */
+function pseudoOn(el: HTMLElement, selector: string, pseudo: Pseudo): HTMLElement {
+  const inner = el.querySelector<HTMLElement>(selector)
+  if (inner) inner.dataset.pseudo = pseudo
+  return el
+}
+
+const SWITCH_STATES: readonly { id: string; caption: string; checked: boolean; pseudo?: Pseudo; disabled?: boolean }[] = [
+  { id: 'off', caption: 'выключен', checked: false },
+  { id: 'on', caption: 'включён', checked: true },
+  { id: 'hover', caption: 'наведение', checked: false, pseudo: 'hover' },
+  { id: 'active', caption: 'нажатие', checked: true, pseudo: 'active' },
+  { id: 'focus', caption: 'фокус', checked: false, pseudo: 'focus-visible' },
+  { id: 'disabled-off', caption: 'недоступен, выключен', checked: false, disabled: true },
+  { id: 'disabled-on', caption: 'недоступен, включён', checked: true, disabled: true },
+]
+
+const THEMES: readonly SegmentOption[] = [
+  { value: 'dark', label: 'Тёмная' },
+  { value: 'light', label: 'Светлая' },
+  { value: 'auto', label: 'Как в Telegram' },
+]
+const SIZES: readonly SegmentOption[] = [
+  { value: 's', label: 'Мельче', glyph: 'А', glyphSize: 15 },
+  { value: 'm', label: 'Обычный', glyph: 'А', glyphSize: 19 },
+  { value: 'l', label: 'Крупнее', glyph: 'А', glyphSize: 24 },
+]
+
+const seg = (options: readonly SegmentOption[], value: string, disabled = false): HTMLDivElement =>
+  segmented({ label: 'Пример', options, value, onChange: noop, tap: 'kit.demo', disabled })
+
+function controlsLive(): HTMLElement {
+  const readout = h('p', { class: 'kit-readout', 'data-live': 'controls' })
+  const switches = [
+    switchRow({ label: 'Звук', checked: true, onChange: () => render(), tap: 'kit.demo' }),
+    switchRow({ label: 'Музыка', hint: 'Фоновая мелодия в эпизодах', checked: false, onChange: () => render(), tap: 'kit.demo' }),
+    switchRow({ label: 'Вибрация', checked: true, onChange: () => render(), tap: 'kit.demo', disabled: false }),
+  ]
+  const theme = segmented({ label: 'Тема', options: THEMES, value: 'dark', onChange: () => render(), tap: 'kit.demo' })
+  const render = (): void => {
+    const on = switches.filter(isSwitchChecked).map((sw) => sw.querySelector('.ui-switch__label')?.textContent ?? '')
+    readout.textContent = `Включено: ${on.join(', ') || 'ничего'} · тема: ${segmentedValue(theme)}`
+  }
+  render()
+  return h('div', { class: 'kit-live kit-live--column', 'data-live-box': 'controls' }, [h('div', { class: 'kit-stack' }, switches), theme, readout])
+}
+
+const controlsSection = section('controls', 'Переключатель и сегменты', 'Переключатель нажимается всей строкой. Сегменты — стрелками клавиатуры, в порядке Tab только выбранный.', [
+  row(
+    'switch-states',
+    'переключатель',
+    SWITCH_STATES.map((st) => {
+      const sw = switchRow({ label: 'Звук в эпизодах', checked: st.checked, onChange: noop, tap: 'kit.demo', disabled: st.disabled })
+      if (st.pseudo) sw.dataset.pseudo = st.pseudo
+      return spec(st.caption, sw, st.id)
+    }),
+    'kit-grid--rows',
+  ),
+  row(
+    'switch-extra',
+    'с пояснением и длинной подписью',
+    [
+      spec(
+        'пояснение',
+        switchRow({ label: 'Уведомления о новых эпизодах', hint: 'Бот напишет, когда выйдет следующая глава', checked: true, onChange: noop, tap: 'kit.demo' }),
+        'hint',
+      ),
+    ],
+    'kit-grid--rows',
+  ),
+  row(
+    'seg-states',
+    'сегменты',
+    [
+      spec('выбран первый', seg(THEMES, 'dark'), 'default'),
+      spec('наведение на другой', pseudoOn(seg(THEMES, 'dark'), '[data-value="light"]', 'hover'), 'hover'),
+      spec('нажатие', pseudoOn(seg(THEMES, 'dark'), '[data-value="light"]', 'active'), 'active'),
+      spec('фокус с клавиатуры', pseudoOn(seg(THEMES, 'light'), '[data-value="light"]', 'focus-visible'), 'focus'),
+      spec('выбран последний', seg(THEMES, 'auto'), 'last'),
+      spec('ничего не выбрано', seg(THEMES, ''), 'empty'),
+      spec(
+        'вариант недоступен',
+        segmented({ label: 'Пример', options: [THEMES[0], { ...THEMES[1], disabled: true }, THEMES[2]], value: 'dark', onChange: noop, tap: 'kit.demo' }),
+        'option-disabled',
+      ),
+      spec('вся группа недоступна', seg(THEMES, 'dark', true), 'disabled'),
+      spec('со знаком — размер текста', seg(SIZES, 'm'), 'glyph'),
+      spec('два варианта', seg([{ value: 'ru', label: 'Русский' }, { value: 'en', label: 'English' }], 'ru'), 'two'),
+    ],
+    'kit-grid--rows',
+  ),
+  h('p', { class: 'kit-row__title', text: 'живой пример — настройки' }),
+  controlsLive(),
+])
+
+// ---------------------------------------------------------------------------
+// Поле ввода (шаг 2.3): состояния, виды клавиатуры, форма внизу экрана и промокод в шторке
+// ---------------------------------------------------------------------------
+
+function field(o: TextFieldOptions, mark?: string): ReturnType<typeof textField> {
+  const f = textField(o)
+  if (mark) f.root.dataset.field = mark
+  return f
+}
+
+function fieldStates(): HTMLElement[] {
+  const filled = field({ label: 'Имя в истории', value: 'Вера', hint: 'Так к тебе будут обращаться герои', clear: 'kit.demo' })
+  const error = field({ label: 'Промокод', kind: 'code', value: 'NAMERTV', maxLength: 16, counter: true })
+  error.setError('Такого промокода нет — проверь буквы')
+  const errorFocus = field({ label: 'Промокод', kind: 'code', value: 'NAMERTV' })
+  errorFocus.setError('Такого промокода нет — проверь буквы')
+  return [
+    spec('пустое, с примером', field({ label: 'Имя в истории', placeholder: 'Например, Вера', hint: 'Так к тебе будут обращаться герои' }).root, 'empty'),
+    spec('заполнено, с крестиком', filled.root, 'filled'),
+    spec('наведение', pseudoOn(field({ label: 'Имя в истории', placeholder: 'Например, Вера' }).root, '.ui-field__box', 'hover'), 'hover'),
+    spec('фокус', pseudoOn(field({ label: 'Имя в истории', value: 'Вера' }).root, '.ui-field__box', 'focus-within'), 'focus'),
+    spec('ошибка', error.root, 'error'),
+    spec('ошибка, фокус', pseudoOn(errorFocus.root, '.ui-field__box', 'focus-within'), 'error-focus'),
+    spec('счётчик', field({ label: 'Промокод', kind: 'code', value: 'NAMERTVO', maxLength: 16, counter: true }).root, 'counter'),
+    spec('только чтение', field({ label: 'ID игрока', value: '48 151 623', readOnly: true }).root, 'readonly'),
+    spec('недоступно', field({ label: 'Почта', kind: 'email', placeholder: 'name@mail.ru', disabled: true }).root, 'disabled'),
+  ]
+}
+
+const KIND_SAMPLES: readonly { kind: FieldKind; caption: string; label: string; placeholder: string }[] = [
+  { kind: 'code', caption: 'код: заглавные, без автозамены', label: 'Промокод', placeholder: 'NAMERTVO-2026' },
+  { kind: 'number', caption: 'цифры: цифровая клавиатура', label: 'Год рождения героя', placeholder: '1987' },
+  { kind: 'email', caption: 'почта: клавиатура с @', label: 'Почта', placeholder: 'name@mail.ru' },
+  { kind: 'search', caption: 'поиск: кнопка «Найти»', label: 'Поиск по архиву', placeholder: 'Название дела' },
+]
+
+/** Промокод: пусто или короче 4 символов — ошибка; иначе — «принят» (стенд, сервера нет) */
+function checkPromo(value: string): string | null {
+  if (!value) return 'Введи промокод'
+  if (value.length < 4) return 'Промокод — от 4 символов'
+  return null
+}
+
+function fieldLive(): HTMLElement {
+  const readout = h('p', { class: 'kit-readout', 'data-live': 'field', text: 'Ещё ничего не отправляли' })
+  const say = (text: string): void => {
+    readout.textContent = text
+  }
+  const name = field({ label: 'Имя в истории', placeholder: 'Например, Вера', enterKeyHint: 'next', clear: 'kit.demo' }, 'name')
+  const email = field({ label: 'Почта', kind: 'email', placeholder: 'name@mail.ru', enterKeyHint: 'next' }, 'email')
+  const year = field({ label: 'Год рождения героя', kind: 'number', placeholder: '1987', maxLength: 4 }, 'number')
+  const promo = field(
+    {
+      label: 'Промокод',
+      kind: 'code',
+      placeholder: 'NAMERTVO-2026',
+      hint: 'Последнее поле внизу экрана — клавиатура не должна его закрыть',
+      maxLength: 16,
+      counter: true,
+      clear: 'kit.demo',
+      onSubmit: (v) => {
+        const err = checkPromo(v)
+        promo.setError(err)
+        if (!err) say(`Промокод ${v} отправлен`)
+      },
+    },
+    'promo',
+  )
+  name.input.addEventListener('keydown', (e) => e.key === 'Enter' && email.focus())
+  email.input.addEventListener('keydown', (e) => e.key === 'Enter' && year.focus())
+
+  const openPromoSheet = (): void => {
+    const code = field(
+      {
+        label: 'Промокод',
+        kind: 'code',
+        placeholder: 'NAMERTVO-2026',
+        hint: 'Промокод из канала или от друзей',
+        maxLength: 16,
+        counter: true,
+        clear: 'kit.demo',
+        onSubmit: () => apply(),
+      },
+      'sheet-promo',
+    )
+    const apply = (): void => {
+      const err = checkPromo(code.value())
+      code.setError(err)
+      if (err) return
+      say(`Промокод ${code.value()} отправлен из шторки`)
+      sheet.close()
+    }
+    const sheet = openBottomSheet({
+      title: 'Промокод',
+      subtitle: 'Шторка поднимается над клавиатурой',
+      tap: 'kit.demo',
+      content: [h('div', { class: 'kit-stack' }, [code.root, button('btn btn--primary btn--block', 'Применить', apply, { 'data-field-submit': 'sheet' }, demo('field.apply'))])],
+    })
+  }
+  const promoSheet = actionChip({ text: 'Промокод в шторке', onClick: openPromoSheet, tap: demo('open.promo') })
+  promoSheet.dataset.open = 'promo'
+
+  return h('div', { class: 'kit-live kit-live--column', 'data-live-box': 'field' }, [
+    chipGroup('Открыть', [promoSheet]),
+    h('div', { class: 'kit-stack' }, [name.root, email.root, year.root, promo.root]),
+    readout,
+  ])
+}
+
+const fieldSection = section('field', 'Поле ввода', 'Подпись сверху, шрифт 16 px, подсказка или ошибка снизу. Клавиатура поднимает кадр, поле докручивается на виду.', [
+  row('field-states', 'состояния', fieldStates(), 'kit-grid--rows'),
+  row(
+    'field-kinds',
+    'вид поля → своя клавиатура',
+    KIND_SAMPLES.map((k) => spec(k.caption, field({ label: k.label, kind: k.kind, placeholder: k.placeholder }, `kind-${k.kind}`).root, k.kind)),
+    'kit-grid--rows',
+  ),
+  h('p', { class: 'kit-row__title', text: 'живой пример — форма внизу экрана' }),
+  fieldLive(),
+])
+
+// ---------------------------------------------------------------------------
 // Сборка
 // ---------------------------------------------------------------------------
 
 const params = new URLSearchParams(location.search)
 const shell = createShell(document.getElementById('app')!)
-shell.header.append(h('span', { class: 'kit-title', text: 'Компоненты · шаги 2.1–2.2' }))
+shell.header.append(h('span', { class: 'kit-title', text: 'Компоненты · шаги 2.1–2.3' }))
 
 // Слои — в кадр, «Назад» Telegram и Esc закрывают верхний слой: так же, как в app.ts
 setOverlayHost(shell.root)
@@ -489,6 +712,8 @@ shell.content.append(
     badgeSection,
     chipSection,
     overlaySection,
+    controlsSection,
+    fieldSection,
   ]),
 )
 

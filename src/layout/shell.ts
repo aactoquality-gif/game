@@ -12,11 +12,14 @@
  * Пустые зоны не показываются: хедер — пока пусты слоты header и account, таббар — пока пуст tabbar
  * (data-header / data-tabbar = on | off). Зоны появятся сами, когда шаги 3–4 положат в них кнопки.
  * Стили — shell.css: размер кадра решает окно, всё внутри — @container app.
+ * Экранная клавиатура (keyboard.ts): кадр встаёт над ней, поле в фокусе докручивается на виду,
+ * таббар на время ввода прячется (data-keyboard="open").
  */
 
 import './shell.css'
 import { h } from '../ui/dom'
 import { t } from '../i18n'
+import { watchKeyboard } from './keyboard'
 
 export type ChromeMode = 'full' | 'immersive'
 
@@ -52,6 +55,7 @@ export function createShell(mount: HTMLElement): Shell {
   const observer = new MutationObserver(syncZones)
   for (const slot of [header, account, tabbar]) observer.observe(slot, { childList: true })
   syncZones()
+  watchKeyboard(root)
 
   return {
     root,

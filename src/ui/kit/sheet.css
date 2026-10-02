@@ -83,3 +83,25 @@
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
 }
+
+/* --- Низкий кадр: телефон боком с открытой клавиатурой (видно ~190 px) ---
+   Шапка ужимается — полоска и подзаголовок прячутся, место отдаётся полю ввода */
+@container app (max-height: 340px) {
+  .ui-sheet {
+    max-height: calc(100% - var(--top) - 8px);
+  }
+  .ui-sheet__grab {
+    padding-top: 10px;
+  }
+  .ui-sheet__grip,
+  .ui-sheet__subtitle {
+    display: none;
+  }
+  .ui-sheet__head {
+    align-items: center;
+    padding-bottom: 10px;
+  }
+  .ui-sheet__title {
+    font-size: 18px;
+  }
+}

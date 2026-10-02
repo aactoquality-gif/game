@@ -61,6 +61,34 @@
   grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
 }
 
+/* Образцы во всю ширину — переключатели, сегменты, поля */
+.kit-grid--rows {
+  grid-template-columns: minmax(0, 1fr);
+}
+.kit-grid--rows .kit-spec {
+  align-items: stretch;
+  padding: 8px 12px;
+}
+.kit-grid--rows .kit-spec__stage {
+  display: block;
+  min-height: 0;
+}
+.kit-grid--rows .kit-spec__caption {
+  text-align: left;
+}
+
+/* Столбик элементов с отступами: переключатели, поля формы */
+.kit-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+}
+.kit-live.kit-live--column {
+  flex-direction: column;
+  align-items: stretch;
+}
+
 /* Образец: компонент + подпись состояния */
 .kit-spec {
   display: flex;
