@@ -96,9 +96,7 @@
   (открывает их только `overlay.ts`); `switch` (`switchRow`: строка настройки, role="switch", аналитика on / off),
   `segmented` (radiogroup, стрелки, ползунок; знак для размера текста), `text-field` (`textField`: kind
   text / code / number / email / search — своя клавиатура, ошибка, счётчик, «Очистить»). Новые кнопки-иконки, бейджи,
-  чипы, шторки, диалоги, переключатели, сегменты и поля — отсюда, не своей разметкой; старая `.icon-btn` в `style.css` остаётся до переноса экранов;
-  `.sheet*` (кроме `.sheet__actions`, `.sheet__extra`, `.sheet__label`), `.dialog-box*` и `.segmented*` в `style.css`
-  больше не используются. `kit.html` + `src/ui/kit/preview.*` — стенд
+  чипы, шторки, диалоги, переключатели, сегменты и поля — отсюда, не своей разметкой; старая `.icon-btn` в `style.css` остаётся до переноса экранов. `kit.html` + `src/ui/kit/preview.*` — стенд
   компонентов (только dev и `check:ui`): все состояния; наведение, нажатие и фокус «заморожены» копиями правил с `data-pseudo`.
 - `src/i18n.ts` — `t('ключ', { подстановки })`, формы по числу (`{ one, few, many, other }` + `count`).
   `src/locales/ru.ts` — все строки интерфейса; ключи `экран.смысл` (`menu.title`, `reading.tapHint`).
