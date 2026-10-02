@@ -157,9 +157,11 @@
 
 ## 7. Стек, команды, проверки
 - Vanilla TypeScript (strict) + Vite 6. Без React и UI-фреймворков. Runtime-зависимостей нет — так и держать.
-- Сервер `server/index.mjs` — Node без npm-зависимостей: статика, `POST /api/events`, `GET /api/stats` (отчёт Г1 — `server/stats.mjs`).
+- Сервер `server/index.mjs` — Node без npm-зависимостей: статика, `POST /api/events`, `GET /api/stats` (отчёт Г1 — `server/stats.mjs`;
+  вход в статистику — `server/stats-auth.mjs`: Telegram или код на email, `docs/stats-auth.md`).
 - Деплой: `Dockerfile` (сборка на node:22-alpine → Node-сервер), `amvera.yaml`, постоянный диск `/data`. Секреты —
-  `BOT_TOKEN` (подпись initData) и `STATS_KEY` (доступ к `/api/stats`) — только в переменных Amvera, не в репозитории и не в логах.
+  `BOT_TOKEN` (подпись initData), `STATS_SESSION_SECRET`, `RESEND_API_KEY`; списки доступа к статистике — `STATS_ADMIN_TELEGRAM_IDS`,
+  `STATS_ADMIN_EMAILS` (полный список переменных — `docs/stats-auth.md`) — только в переменных Amvera, не в репозитории и не в логах.
 - Бюджет: JS + CSS ≤ 50 КБ gzip (проверяет `check:ui`); первый экран ≤ 3 с на мобильном интернете.
 
 | Команда | Что делает |
@@ -168,12 +170,14 @@
 | `npm run dev:server` | локальный сервер аналитики на 3000 |
 | `npm run build` | `tsc` + `vite build` |
 | `npm run check:rules` | правила кода, CSS, зависимостей, контента и публикации — без браузера, ~1 с |
+| `npm run test:server` | тесты сервера (`tests/*.test.mjs`, `node --test`): вход в статистику |
 | `npm run check:ui` | `check:rules` + сборка + интерфейс в Chromium; отчёт `.checks/ui/report.html` |
 
 - `✗` — ошибка, проверка красная. `!` — замечание: не блокирует, новые — в отчёт.
 - Быстрый прогон: `CHECK_ONLY=390-telegram,320-browser npm run check:ui`; только стенды — `CHECK_ONLY=shell` / `CHECK_ONLY=kit`.
 - Что именно проверяется и как добавить проверку — `docs/check-ui.md`; перед правкой `scripts/check-*.mjs` прочитай его.
-- **CI:** каждый PR в `main` прогоняет `npm run check:ui` (`.github/workflows/check.yml`); отчёт со скриншотами — артефакт прогона.
+- **CI:** каждый PR в `main` прогоняет `npm run test:server` и `npm run check:ui` (`.github/workflows/check.yml`); отчёт
+  со скриншотами — артефакт прогона. Правка `server/` → `npm run test:server` зелёная, новое поведение — тест в `tests/`.
 - **Откат прода:** PR с `git revert` слитого коммита в `main` — Amvera выкатит прежнюю версию за 2–3 минуты.
 - Проверка агента на прочность — `docs/agent-redteam.md`.
 
@@ -227,7 +231,10 @@
   Новый язык — файл `src/locales/<код>.ts` с полным переводом; выбор языка игроком — шаг 5.2.
 - `src/style.css` — токены (`:root`) и стили. Палитра «cozy dark» своя, не из темы Telegram.
 - `public/content/ru/` — `catalog.json` (истории и эпизоды), `ch1.json` (эпизод). Контент правит автор (правило 16).
-- `scripts/check-rules.mjs`, `scripts/check-ui.mjs` — автопроверки (`docs/check-ui.md`). `server/` — сервер и отчёт Г1.
+- `scripts/check-rules.mjs`, `scripts/check-ui.mjs` — автопроверки (`docs/check-ui.md`); `scripts/check-stats-ui.mjs` — страница
+  входа в статистику (часть `check:ui`). `server/` — сервер и отчёт Г1; `tests/` — тесты сервера.
+- `stats-login.html` + `src/stats-login.ts` / `.css` — админ-страница входа в статистику, не часть игры: своя светлая палитра
+  и переход после входа — в исключениях `check:rules` (`ALLOW.ownPalette`, `ALLOW.openLink`).
   `docs/` — справочники для людей. `.github/workflows/check.yml` — CI.
 
 ## 9. Отладка

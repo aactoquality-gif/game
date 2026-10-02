@@ -31,7 +31,9 @@ const ALLOW = {
   webStorage: ['src/storage.ts', 'src/analytics.ts'],
   cloudStorage: ['src/storage.ts', 'src/telegram.ts'],
   telegramGlobal: ['src/telegram.ts'],
-  openLink: ['src/telegram.ts'],
+  // stats-login — админ-страница входа в статистику вне игры: свой переход после входа и своя светлая палитра
+  openLink: ['src/telegram.ts', 'src/stats-login.ts'],
+  ownPalette: ['src/stats-login.css'],
   windowMedia: ['src/layout/shell.css'],
   devDependencies: ['typescript', 'vite', 'playwright-core'],
 }
@@ -356,7 +358,7 @@ export function checkCssFile(path, text) {
           out.push(finding('error', 'css-cqh', 'правило 4', at(d.line), `${d.prop} в cqh без запасной строки в vh`, `строкой выше — ${d.prop} с vh для старых WebView`))
         }
       }
-      if (component && COLOR_LITERAL.test(d.value.replace(BLACK_SHADOW, ''))) {
+      if (component && !ALLOW.ownPalette.includes(path) && COLOR_LITERAL.test(d.value.replace(BLACK_SHADOW, ''))) {
         out.push(finding('error', 'css-color', 'правило 4', at(d.line), `цвет мимо переменных: ${d.prop}: ${d.value}`, 'цвета — var(--…) палитры; смесь — color-mix() внутри @supports'))
       }
     })
@@ -742,6 +744,8 @@ function selfTest() {
     ['sys-dialog', 'window.alert()', ts('src/ui/x.ts', "window.alert('x')")],
     ['open-link', 'window.open', ts('src/ui/x.ts', 'window.open(url)')],
     ['open-link', 'location.href =', ts('src/ui/x.ts', 'location.href = url')],
+    ['open-link', 'location.replace в игре', ts('src/ui/x.ts', 'location.replace(url)')],
+    [null, 'переход на админ-странице статистики', ts('src/stats-login.ts', 'location.replace(target.href)')],
     ['ui-network', 'экран импортирует api', ts('src/ui/x.ts', "import { getWallet } from '../api'")],
     ['ui-network', 'kit импортирует sync', ts('src/ui/kit/x.ts', "import { refresh } from '../../sync'")],
     ['stub', 'заглушка // ...', checkStubs('src/x.ts', 'function f() {\n  // ...\n}')],
@@ -752,6 +756,8 @@ function selfTest() {
     ['css-window-media', '@media по ширине окна', css('src/ui/kit/x.css', '@media (min-width: 600px) { .ui-x { gap: 0; } }')],
     ['css-cqh', 'cqh без vh', css('src/ui/kit/x.css', '.ui-x { max-height: 50cqh; }')],
     ['css-color', 'цвет числом', css('src/ui/kit/x.css', '.ui-x { color: #fff; }')],
+    ['css-color', 'своя палитра в игре', css('src/ui/x.css', '.ui-x { --x-bg: #fff; }')],
+    [null, 'своя палитра админ-страницы статистики', css('src/stats-login.css', '.stats-login { --stats-bg: #fff; }')],
     ['css-color', 'rgba не чёрный', css('src/layout/x.css', '.app-x { background: rgba(20, 18, 26, 0.5); }')],
     ['css-global', 'теговый селектор', css('src/ui/x/x.css', 'button { color: var(--text); }')],
     ['css-prefix', 'kit без ui-', css('src/ui/kit/x.css', '.btn { color: var(--text); }')],
