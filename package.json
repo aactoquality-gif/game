@@ -10,7 +10,8 @@
     "check:rules": "node scripts/check-rules.mjs",
     "check:ui": "npm run check:rules && npm run build && node scripts/check-ui.mjs",
     "preview": "vite preview",
-    "start": "node server/index.mjs"
+    "start": "node server/index.mjs",
+    "test:server": "node --test tests/*.test.mjs"
   },
   "devDependencies": {
     "playwright-core": "^1.63.0",

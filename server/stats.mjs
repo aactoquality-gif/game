@@ -317,13 +317,12 @@ a{color:var(--bar)}
 <div class="muted meta">${r.events} событий · проверка подписи Telegram: ${meta.verifyOn ? 'включена' : '<b>выключена (нет BOT_TOKEN)</b>'} · данные: ${esc(meta.dataDir)}</div>
 
 <form method="get">
-  <input type="hidden" name="key" value="${esc(meta.key)}">
-  <input type="hidden" name="story" value="${esc(r.story)}">
-  <input type="hidden" name="episode" value="${r.episode}">
+  <label>история <input name="story" value="${esc(r.story)}"></label>
+  <label>эпизод <input type="number" min="1" name="episode" value="${r.episode}"></label>
   <label>с даты <input type="date" name="from" value="${esc(meta.from)}"></label>
   <label>исключить ID <input name="exclude" value="${esc(meta.exclude)}" placeholder="через запятую"></label>
   <button type="submit">Применить</button>
-  <a href="/api/events.jsonl?key=${encodeURIComponent(meta.key)}">скачать сырые события</a>
+  <a href="/api/stats/download">скачать сырые события</a>
 </form>
 
 <div class="cards">

@@ -5,6 +5,7 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     target: 'es2020',
+    rollupOptions: { input: { game: 'index.html', stats: 'stats-login.html' } },
   },
   server: {
     proxy: {

@@ -117,3 +117,25 @@ export const api: Api = {
   getWallet: () => mockApi.getWallet(), // шаг 8.x: GET /api/wallet
   getInbox: () => mockApi.getInbox(), // шаг 8.x: GET /api/inbox
 }
+
+// Admin authentication is independent of player state and never returns a session token.
+export interface StatsAuthResult { ok: boolean; status: number; retryAfter: number }
+export type StatsAuthRequest =
+  | { action: 'telegram'; body: { initData: string } }
+  | { action: 'email/request'; body: { email: string } }
+  | { action: 'email/verify'; body: { email: string; code: string } }
+
+export async function statsAuthenticate(request: StatsAuthRequest): Promise<StatsAuthResult> {
+  const response = await fetch(`/api/stats/auth/${request.action}`, {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request.body), signal: AbortSignal.timeout(15000),
+  })
+  return { ok: response.ok, status: response.status, retryAfter: Number(response.headers.get('Retry-After')) || 600 }
+}
+
+export async function statsSessionAvailable(): Promise<boolean> {
+  const response = await fetch('/api/stats?format=json', { credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(15000) })
+  await response.body?.cancel()
+  return response.ok
+}
