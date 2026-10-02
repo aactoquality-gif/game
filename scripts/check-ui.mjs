@@ -828,8 +828,17 @@ async function runRegression(browser, baseUrl, apiLog, vpId, mode) {
     s = await state()
     expect(s.text !== beforeKey, 'клавиатура: цифра 1 выбирает первый вариант')
 
-    // 2. Пауза → «Начать эпизод сначала» → диалог поверх шторки → подтвердить
+    // 2. Пауза: размер текста — сегменты (нажатие и стрелки), потом «Начать эпизод сначала» → диалог поверх шторки
     await page.locator('.hud button').first().click()
+    await page.locator('.layer--sheet').waitFor()
+    await page.waitForTimeout(250)
+    const textSize = () => page.evaluate(() => document.documentElement.dataset.textSize)
+    await page.locator('.layer .ui-seg [data-value="l"]').click()
+    expect((await textSize()) === 'l', 'пауза: «Крупнее» — текст крупнее (сегменты)')
+    await page.keyboard.press('ArrowLeft')
+    const afterArrow = await page.evaluate(() => document.activeElement?.dataset.value)
+    expect((await textSize()) === 'm' && afterArrow === 'm', 'пауза: стрелка ← выбирает «Обычный» и переводит на него фокус')
+    expect((await page.locator('.layer').count()) === 1, 'пауза: стрелки не листают эпизод под шторкой')
     await page.locator('[data-track="pause.restart"]').click()
     await page.locator('.layer--dialog').waitFor()
     await page.waitForTimeout(250)
@@ -896,7 +905,7 @@ async function runRegression(browser, baseUrl, apiLog, vpId, mode) {
     const events = apiLog.filter((p) => p.caseId === id).flatMap((p) => p.events ?? [])
     const taps = events.filter((e) => e.event === 'ui_tap').map((e) => `${e.data?.target}${e.data?.value !== undefined ? `:${e.data.value}` : ''}`)
     const dismissWay = mode === 'telegram' ? 'back' : 'esc'
-    for (const need of ['pause.restart', `dialog.restart:${dismissWay}`, 'dialog.restart:cancel', 'dialog.restart:confirm', 'end.toStory', 'story.episodeReread:1', 'dialog.reread:cancel']) {
+    for (const need of ['pause.textSize:l', 'pause.textSize:m', 'pause.restart', `dialog.restart:${dismissWay}`, 'dialog.restart:cancel', 'dialog.restart:confirm', 'end.toStory', 'story.episodeReread:1', 'dialog.reread:cancel']) {
       expect(taps.includes(need), `аналитика: ${need}`)
     }
     expect(taps.some((x) => x.startsWith('menu.folderSoon:')), 'аналитика: menu.folderSoon с историей')
@@ -1080,8 +1089,22 @@ const KIT_CASES = [
   { id: 'kit-320', label: 'компоненты', width: 320, height: 568, mobile: true },
   { id: 'kit-390', label: 'компоненты', width: 390, height: 844, mobile: true, hitShot: true },
   { id: 'kit-1440', label: 'компоненты · мышь и клавиатура', width: 1440, height: 900, mobile: false },
-  { id: 'kit-390-tg', label: 'компоненты · шторка и диалог в Telegram', width: 390, height: 844, mobile: true, mode: 'telegram', overlayOnly: true },
+  { id: 'kit-390-tg', label: 'компоненты · Telegram: шторка, диалог, клавиатура', width: 390, height: 844, mobile: true, mode: 'telegram', only: ['overlay', 'keyboard'] },
+  { id: 'kit-768', label: 'компоненты · планшет: клавиатура', width: 768, height: 1024, mobile: true, only: ['keyboard'] },
+  { id: 'kit-844x390', label: 'компоненты · телефон боком: клавиатура', width: 844, height: 390, mobile: true, only: ['keyboard'] },
 ]
+
+/**
+ * Высота экранной клавиатуры, px — для каждого размера: обычная (text), цифровая (numeric) и с полосой
+ * автозаполнения над ней (autofill). Порядок величин — iPhone SE, iPhone 14, iPad, телефон боком.
+ */
+const KEYBOARDS = {
+  'kit-320': { text: 260, numeric: 216, autofill: 304 },
+  'kit-390': { text: 336, numeric: 291, autofill: 380 },
+  'kit-390-tg': { text: 336, numeric: 291, autofill: 380 },
+  'kit-768': { text: 398, numeric: 398, autofill: 442 },
+  'kit-844x390': { text: 200, numeric: 200, autofill: 236 },
+}
 
 const KIT_ICON_STATES = ['default', 'hover', 'active', 'focus', 'on', 'disabled']
 const KIT_BADGES_ON_BUTTON = ['dot', 'count-1', 'count-12', 'overflow', 'label', 'alert', 'zero']
@@ -1339,12 +1362,14 @@ async function runKitCase(browser, kitUrl, c) {
   const { res, context, page, expect, fail } = await openCase(browser, vp, mode, { id: c.id, label: c.label })
   const ICON_SIZE = { m: 40, s: 32 }
   try {
+    await page.addInitScript(fakeKeyboard)
     await page.goto(kitUrl)
     await page.waitForSelector('[data-kit-ready]')
     await page.waitForTimeout(400) // переходы (transition) закончились
-    if (c.overlayOnly) {
-      // Telegram: компоненты 2.1 уже проверены в браузере — здесь только слои и системная «Назад»
-      await checkOverlays(page, c, expect, res)
+    if (c.only) {
+      // Компоненты 2.1 уже проверены — здесь только слои (Telegram «Назад») и клавиатура на этом размере
+      if (c.only.includes('overlay')) await checkOverlays(page, c, expect, res)
+      if (c.only.includes('keyboard')) await checkKeyboard(page, c, expect, res)
       await context.close()
       return res
     }
@@ -1517,14 +1542,18 @@ async function runKitCase(browser, kitUrl, c) {
     // 11. Шторка и диалог
     await checkOverlays(page, c, expect, res)
 
-    // 12. Скриншоты
+    // 12. Переключатель и сегменты; поле ввода и клавиатура
+    await checkControls(page, c, expect)
+    await checkKeyboard(page, c, expect, res)
+
+    // 13. Скриншоты
     if (c.mobile) {
       // Каждый раздел целиком: кадр телефона растягивается на высоту раздела
       const sections = await page.evaluate(() =>
         [...document.querySelectorAll('[data-section]')].map((s) => ({ id: s.dataset.section, top: s.offsetTop, height: s.offsetHeight })),
       )
       const headerH = await page.evaluate(() => document.querySelector('.app-header').getBoundingClientRect().height)
-      const NAMES = { iconbtn: 'кнопка-иконка', badge: 'бейдж', chip: 'чип', overlay: 'шторка и диалог: кнопки' }
+      const NAMES = { iconbtn: 'кнопка-иконка', badge: 'бейдж', chip: 'чип', overlay: 'шторка и диалог: кнопки', controls: 'переключатель и сегменты', field: 'поле ввода' }
       const shotSection = async (s, name, file) => {
         await page.setViewportSize({ width: c.width, height: Math.ceil(headerH + s.height + 24) })
         await page.evaluate((top) => (document.querySelector('.app-content').scrollTop = top - 8), s.top)
@@ -1549,6 +1578,367 @@ async function runKitCase(browser, kitUrl, c) {
   }
   await context.close()
   return res
+}
+
+/**
+ * Имитация экранной клавиатуры iOS: она перекрывает экран — уменьшается только visualViewport
+ * (height), а iOS может ещё сдвинуть страницу (offsetTop). Выполняется в странице до её скриптов.
+ * window.__kb.open(высота, сдвиг) / close(). Android-вариант (экран ужимается) — это setViewportSize.
+ */
+function fakeKeyboard() {
+  const real = window.visualViewport
+  const listeners = { resize: new Set(), scroll: new Set() }
+  const st = { kb: 0, pan: 0 }
+  const fake = {
+    get width() {
+      return real ? real.width : innerWidth
+    },
+    get height() {
+      return Math.max(0, document.documentElement.clientHeight - st.kb)
+    },
+    get offsetTop() {
+      return st.pan
+    },
+    offsetLeft: 0,
+    get pageTop() {
+      return st.pan
+    },
+    pageLeft: 0,
+    scale: 1,
+    addEventListener(type, fn) {
+      ;(listeners[type] ??= new Set()).add(fn)
+    },
+    removeEventListener(type, fn) {
+      listeners[type]?.delete(fn)
+    },
+  }
+  Object.defineProperty(window, 'visualViewport', { configurable: true, get: () => fake })
+  const fire = () => {
+    for (const type of ['resize', 'scroll']) for (const fn of listeners[type] ?? []) fn(new Event(type))
+  }
+  window.addEventListener('resize', fire) // настоящее изменение окна — как у браузера: visualViewport тоже
+  window.__kb = {
+    open(kb, pan = 0) {
+      st.kb = kb
+      st.pan = pan
+      fire()
+    },
+    close() {
+      st.kb = 0
+      st.pan = 0
+      fire()
+    },
+  }
+}
+
+/** Переключатель и сегменты: роли, состояния видны, переключение касанием и с клавиатуры */
+async function checkControls(page, c, expect) {
+  const m = await page.evaluate(() => {
+    const cell = (row, st) => document.querySelector(`[data-row="${row}"] [data-state="${st}"]`)
+    const sw = (st) => cell('switch-states', st)?.querySelector('.ui-switch')
+    const look = (el) => {
+      if (!el) return null
+      const track = el.querySelector('.ui-switch__track')
+      const thumb = el.querySelector('.ui-switch__thumb')
+      const t = getComputedStyle(track)
+      return { bg: t.backgroundColor, border: t.borderTopColor, ring: t.boxShadow, thumbW: thumb.offsetWidth, thumbX: thumb.getBoundingClientRect().left - track.getBoundingClientRect().left, opacity: getComputedStyle(el).opacity, h: el.offsetHeight }
+    }
+    const switches = {}
+    for (const st of ['off', 'on', 'hover', 'active', 'focus', 'disabled-off', 'disabled-on']) switches[st] = look(sw(st))
+    const hinted = cell('switch-extra', 'hint')?.querySelector('.ui-switch')
+    const name = (el) => (el?.getAttribute('aria-labelledby') ? document.getElementById(el.getAttribute('aria-labelledby'))?.textContent : '')
+    const desc = (el) => (el?.getAttribute('aria-describedby') ? document.getElementById(el.getAttribute('aria-describedby'))?.textContent : '')
+
+    const segs = [...document.querySelectorAll('[data-row="seg-states"] .ui-seg')]
+    const segInfo = segs.map((g) => {
+      const items = [...g.querySelectorAll('.ui-seg__item')]
+      const checked = items.filter((i) => i.getAttribute('aria-checked') === 'true')
+      const tabbable = items.filter((i) => i.tabIndex === 0)
+      const idx = items.indexOf(checked[0])
+      const indicator = getComputedStyle(g, '::before')
+      return {
+        state: g.closest('[data-state]').dataset.state,
+        role: g.getAttribute('role'),
+        radios: items.every((i) => i.getAttribute('role') === 'radio'),
+        checked: checked.length,
+        tabbable: tabbable.length,
+        tabOk: checked.length ? tabbable[0] === checked[0] : tabbable.length === 1 && !tabbable[0].disabled,
+        indexOk: !checked.length || Number(getComputedStyle(g).getPropertyValue('--i')) === idx,
+        indicatorW: parseFloat(indicator.width),
+        itemW: items[0].getBoundingClientRect().width,
+        indicatorHidden: indicator.opacity === '0',
+        minH: Math.min(...items.map((i) => i.offsetHeight)),
+      }
+    })
+    const segItem = (st, value) => cell('seg-states', st)?.querySelector(`[data-value="${value}"]`)
+    const segLook = (el) => (el ? JSON.stringify([getComputedStyle(el).color, getComputedStyle(el).backgroundColor, getComputedStyle(el).boxShadow, getComputedStyle(el).transform]) : '')
+    return {
+      switches,
+      roles: [...document.querySelectorAll('.ui-switch')].every((el) => el.getAttribute('role') === 'switch' && ['true', 'false'].includes(el.getAttribute('aria-checked'))),
+      hintName: name(hinted),
+      hintDesc: desc(hinted),
+      segInfo,
+      segHover: segLook(segItem('hover', 'light')) !== segLook(segItem('default', 'light')),
+      segActive: segLook(segItem('active', 'light')) !== segLook(segItem('default', 'light')),
+      segFocus: segLook(segItem('focus', 'light')) !== segLook(segItem('last', 'light')),
+    }
+  })
+  const s = m.switches
+  expect(m.roles, 'переключатель: role="switch" и aria-checked у каждого')
+  expect(s.off && s.on && s.on.bg !== s.off.bg && s.on.thumbX > s.off.thumbX, 'переключатель: включён — латунная дорожка, рычажок справа (не только цвет)')
+  expect(s.hover && s.hover.border !== s.off.border, 'переключатель: наведение видно')
+  expect(s.active && s.active.thumbW > s.on.thumbW, 'переключатель: нажатие — рычажок вытягивается')
+  expect(s.focus && s.focus.ring !== 'none' && s.off.ring === 'none', 'переключатель: фокус с клавиатуры — кольцо')
+  expect(Number(s['disabled-off']?.opacity) < 1 && Number(s['disabled-on']?.opacity) < 1, 'переключатель: «недоступен» приглушён в обоих положениях')
+  expect(Object.values(s).every((x) => x && x.h >= 56), 'переключатель: строка не ниже 56 px — нажимается целиком')
+  expect(m.hintName === 'Уведомления о новых эпизодах' && /Бот напишет/.test(m.hintDesc), 'переключатель: имя — подпись, пояснение — описание для скринридера')
+
+  const segBad = m.segInfo.filter((g) => !(g.role === 'radiogroup' && g.radios && g.tabOk && g.indexOk && g.minH >= 44 && g.checked <= 1))
+  expect(m.segInfo.length >= 8 && segBad.length === 0, `сегменты: radiogroup, один выбранный, в порядке Tab — только он, ползунок под ним, высота ≥ 44${segBad.length ? ` — не так: ${segBad.map((g) => g.state).join(', ')}` : ''}`)
+  const empty = m.segInfo.find((g) => g.state === 'empty')
+  expect(!!empty && empty.checked === 0 && empty.indicatorHidden && empty.tabbable === 1, 'сегменты: ничего не выбрано — ползунка нет, в группу можно попасть Tab')
+  const first = m.segInfo.find((g) => g.state === 'default')
+  expect(!!first && Math.abs(first.indicatorW - first.itemW) <= 1, 'сегменты: ползунок шириной в сегмент')
+  expect(m.segHover && m.segActive && m.segFocus, 'сегменты: наведение, нажатие и фокус видны')
+
+  // Живые: касанием и с клавиатуры
+  const live = '[data-live-box="controls"]'
+  const readout = page.locator('[data-live="controls"]')
+  const music = page.locator(`${live} .ui-switch`, { hasText: 'Музыка' })
+  await music.scrollIntoViewIfNeeded()
+  await music.click()
+  expect((await music.getAttribute('aria-checked')) === 'true' && /Музыка/.test(await readout.textContent()), 'переключатель: касание включает (вся строка)')
+  const light = page.locator(`${live} .ui-seg [data-value="light"]`)
+  await light.click()
+  expect((await light.getAttribute('aria-checked')) === 'true' && /тема: light/.test(await readout.textContent()), 'сегменты: касание выбирает вариант')
+  if (!c.mobile) {
+    await music.focus()
+    await page.keyboard.press('Space')
+    expect((await music.getAttribute('aria-checked')) === 'false', 'клавиатура: пробел переключает')
+    await light.focus()
+    await page.keyboard.press('ArrowRight')
+    const right = await page.evaluate((sel) => document.activeElement?.closest(sel) && document.activeElement.dataset.value, live)
+    await page.keyboard.press('ArrowRight')
+    const wrapped = await page.evaluate(() => document.activeElement?.dataset.value)
+    await page.keyboard.press('End')
+    const end = await page.evaluate(() => document.activeElement?.dataset.value)
+    expect(right === 'auto' && wrapped === 'dark' && end === 'auto' && /тема: auto/.test(await readout.textContent()), 'клавиатура: стрелки и End переводят выбор по кругу')
+    // Недоступный вариант пропускается
+    await page.locator('[data-state="option-disabled"] .ui-seg [data-value="dark"]').focus()
+    await page.keyboard.press('ArrowRight')
+    expect((await page.evaluate(() => document.activeElement?.dataset.value)) === 'auto', 'клавиатура: недоступный вариант пропускается')
+  }
+}
+
+/**
+ * Поле ввода и экранная клавиатура: правильная клавиатура под вид поля; поле внизу экрана, в шторке
+ * и после появления ошибки — над клавиатурой; iOS сдвинул страницу; Android ужал экран; таббар прячется.
+ */
+async function checkKeyboard(page, c, expect, res) {
+  const kb = KEYBOARDS[c.id] // нет — десктоп: экранной клавиатуры нет
+  const H = c.height
+  const settle = () => page.waitForTimeout(480)
+  const field = (name) => `[data-field="${name}"]`
+
+  // Вид поля → клавиатура и поведение
+  const kinds = await page.evaluate(() => {
+    const attrs = (name) => {
+      const i = document.querySelector(`[data-field="${name}"] input`)
+      const label = i && document.querySelector(`label[for="${i.id}"]`)
+      return i && {
+        type: i.type,
+        inputmode: i.getAttribute('inputmode'),
+        autocapitalize: i.getAttribute('autocapitalize'),
+        spellcheck: i.getAttribute('spellcheck'),
+        autocomplete: i.getAttribute('autocomplete'),
+        enterkeyhint: i.getAttribute('enterkeyhint'),
+        pattern: i.getAttribute('pattern'),
+        font: parseFloat(getComputedStyle(i).fontSize),
+        label: label?.textContent ?? '',
+        height: i.closest('.ui-field__box').offsetHeight,
+      }
+    }
+    return { code: attrs('kind-code'), number: attrs('kind-number'), email: attrs('kind-email'), search: attrs('kind-search'), name: attrs('name') }
+  })
+  const k = kinds
+  expect(k.code?.autocapitalize === 'characters' && k.code.spellcheck === 'false' && k.code.autocomplete === 'off' && k.code.enterkeyhint === 'go', 'промокод: заглавные, без автозамены и подсказок, Enter — «Перейти»')
+  expect(k.number?.inputmode === 'numeric' && k.number.pattern === '[0-9]*', 'цифры: цифровая клавиатура (inputmode numeric, pattern для iOS)')
+  expect(k.email?.type === 'email' && k.email.inputmode === 'email' && k.email.autocomplete === 'email' && k.email.autocapitalize === 'none', 'почта: клавиатура с @ и автозаполнение адреса')
+  expect(k.search?.enterkeyhint === 'search' && k.search.inputmode === 'search', 'поиск: кнопка «Найти» на клавиатуре')
+  expect(Object.values(k).every((x) => x && x.font >= 16 && x.height >= 44 && x.label), 'поля: шрифт ≥ 16 px (iOS не приближает), высота ≥ 44, подпись связана с полем')
+
+  if (!kb) {
+    // Десктоп: экранной клавиатуры нет — фокус в поле кадр не трогает; Enter переводит к следующему полю
+    await page.locator(`${field('name')} input`).scrollIntoViewIfNeeded()
+    await page.locator(`${field('name')} input`).focus()
+    await settle()
+    const d = await page.evaluate(() => document.querySelector('.app-shell').dataset.keyboard ?? '')
+    await page.keyboard.type('Вера')
+    await page.keyboard.press('Enter')
+    const next = await page.evaluate(() => document.activeElement?.closest('[data-field]')?.dataset.field)
+    expect(d === '' && next === 'email', 'десктоп: фокус в поле не считается клавиатурой; Enter («Далее») — к следующему полю')
+    await page.locator(`${field('name')} .ui-field__clear`).click()
+    const cleared = await page.evaluate(() => ({ v: document.querySelector('[data-field="name"] input').value, f: document.activeElement?.closest('[data-field]')?.dataset.field }))
+    expect(cleared.v === '' && cleared.f === 'name', 'крестик очищает поле и оставляет в нём фокус')
+    return
+  }
+
+  // Таббар — чтобы проверить, что он прячется на время ввода
+  await page.evaluate(() => document.querySelector('[data-slot="tabbar"]').append(Object.assign(document.createElement('span'), { className: 'kb-test-tab', textContent: 'таббар' })))
+  await page.waitForTimeout(100)
+
+  /** Где поле относительно видимой части экрана над клавиатурой */
+  const where = (name, kbPx, pan = 0) =>
+    page.evaluate(
+      ({ sel, kbPx, pan, H }) => {
+        const f = document.querySelector('.app-shell')
+        const fr = f.getBoundingClientRect()
+        const zoneTop = Math.max(fr.top, document.querySelector('.app-header').getBoundingClientRect().bottom)
+        const box = document.querySelector(sel)
+        const r = box.getBoundingClientRect()
+        const sheet = box.closest('.ui-sheet')
+        const body = sheet?.querySelector('.ui-sheet__body').getBoundingClientRect()
+        const visibleBottom = H - kbPx + pan // низ видимой части в координатах страницы
+        return {
+          frameTop: fr.top,
+          frameBottom: fr.bottom,
+          visibleBottom,
+          fieldTop: r.top,
+          fieldBottom: r.bottom,
+          zoneTop: sheet ? body.top : zoneTop,
+          sheetBottom: sheet ? sheet.getBoundingClientRect().bottom : null,
+          sheetTop: sheet ? sheet.getBoundingClientRect().top : null,
+          keyboard: f.dataset.keyboard ?? '',
+          tabbar: getComputedStyle(document.querySelector('.app-tabbar')).display !== 'none',
+          focused: box.contains(document.activeElement),
+        }
+      },
+      { sel: name.startsWith('[') ? name : field(name), kbPx, pan, H },
+    )
+  const visible = (w, air = 8) => w.fieldTop >= w.zoneTop - 1 && w.fieldBottom <= w.visibleBottom - air && w.focused
+
+  // 1. Последнее поле внизу экрана, обычная клавиатура (iOS: перекрывает экран)
+  await page.evaluate(() => {
+    const z = document.querySelector('.app-content')
+    z.scrollTop = z.scrollHeight
+  })
+  await page.locator(`${field('promo')} input`).focus()
+  await page.evaluate((px) => window.__kb.open(px), kb.text)
+  await settle()
+  let w = await where('promo', kb.text)
+  expect(Math.abs(w.frameBottom - (H - kb.text)) <= 1 && w.keyboard === 'open', `клавиатура ${kb.text} px: кадр встал над ней`)
+  expect(visible(w), `клавиатура ${kb.text} px: поле внизу экрана вместе с подписью и подсказкой — над клавиатурой`)
+  expect(!w.tabbar, 'клавиатура открыта — таббар спрятан')
+  await page.keyboard.type('namertvo')
+  const typed = await page.evaluate((sel) => ({ v: document.querySelector(`${sel} input`).value, counter: document.querySelector(`${sel} .ui-field__counter`)?.textContent }), field('promo'))
+  expect(typed.v === 'namertvo' && typed.counter === '8/16', 'ввод: текст и счётчик «8/16»')
+  await page.keyboard.press('Enter')
+  expect(/NAMERTVO отправлен/.test(await page.locator('[data-live="field"]').textContent()), 'Enter («Перейти») отправляет промокод — заглавными')
+
+  // 2. iOS сдвинул страницу вверх — кадр едет следом, поле по-прежнему видно
+  await page.evaluate((px) => window.__kb.open(px, 120), kb.text)
+  await settle()
+  w = await where('promo', kb.text, 120)
+  expect(Math.abs(w.frameTop - 120) <= 1 && Math.abs(w.frameBottom - (H - kb.text + 120)) <= 1 && visible(w), 'iOS сдвинул страницу: кадр — ровно в видимой части, поле на виду')
+
+  // 3. Закрыли клавиатуру — кадр на весь экран, таббар вернулся
+  await page.evaluate(() => {
+    document.activeElement?.blur()
+    window.__kb.close()
+  })
+  await settle()
+  w = await where('promo', 0)
+  expect(Math.abs(w.frameTop) <= 1 && Math.abs(w.frameBottom - H) <= 1 && w.keyboard === '' && w.tabbar, 'клавиатура закрыта: кадр на весь экран, таббар вернулся')
+
+  // 4. Цифровое поле у нижнего края — цифровая клавиатура; нецифры не вводятся
+  await page.evaluate((sel) => {
+    const z = document.querySelector('.app-content')
+    const r = document.querySelector(sel).getBoundingClientRect()
+    z.scrollTop += r.bottom - z.getBoundingClientRect().bottom + 4 // поле у самого края экрана
+  }, field('number'))
+  await page.locator(`${field('number')} input`).focus()
+  await page.evaluate((px) => window.__kb.open(px), kb.numeric)
+  await settle()
+  w = await where('number', kb.numeric)
+  expect(visible(w), `цифровая клавиатура ${kb.numeric} px: поле над ней`)
+  await page.keyboard.type('19a8b7')
+  expect((await page.locator(`${field('number')} input`).inputValue()) === '1987', 'цифры: буквы не вводятся')
+
+  // 5. Почта с полосой автозаполнения над клавиатурой
+  await page.locator(`${field('email')} input`).focus()
+  await page.evaluate((px) => window.__kb.open(px), kb.autofill)
+  await settle()
+  w = await where('email', kb.autofill)
+  expect(visible(w), `клавиатура с автозаполнением ${kb.autofill} px: поле почты над ней`)
+  await page.evaluate(() => {
+    document.activeElement?.blur()
+    window.__kb.close()
+  })
+  await settle()
+
+  // 6. Промокод в шторке: шторка поднимается над клавиатурой; ошибка под полем тоже видна
+  await page.locator('[data-live-box="field"] [data-open="promo"]').scrollIntoViewIfNeeded()
+  await page.locator('[data-live-box="field"] [data-open="promo"]').click()
+  await page.waitForTimeout(350)
+  await page.locator(`${field('sheet-promo')} input`).focus()
+  await page.evaluate((px) => window.__kb.open(px), kb.text)
+  await settle()
+  w = await where('sheet-promo', kb.text)
+  expect(w.sheetBottom !== null && w.sheetBottom <= w.visibleBottom + 1 && w.sheetTop >= w.frameTop - 1, `шторка с полем: над клавиатурой ${kb.text} px и внутри кадра`)
+  expect(visible(w), 'шторка: поле промокода над клавиатурой')
+  if (c.mobile && (c.id === 'kit-390' || c.id === 'kit-320')) {
+    await page.evaluate((px) => {
+      const k = document.createElement('div') // клавиатура на скриншоте — серая плашка
+      k.id = 'kb-shot'
+      Object.assign(k.style, { position: 'fixed', left: 0, right: 0, bottom: 0, height: `${px}px`, background: '#3a3a40', zIndex: 2147483647 })
+      document.documentElement.append(k)
+    }, kb.text)
+    const file = `${c.id}-keyboard-sheet.png`
+    await page.screenshot({ path: join(OUT, file) })
+    res.shots.push({ name: `шторка над клавиатурой ${kb.text} px`, file })
+    await page.evaluate(() => document.getElementById('kb-shot')?.remove())
+  }
+  await page.keyboard.press('Enter') // пусто — ошибка
+  await settle()
+  w = await where(`${field('sheet-promo')} .ui-field__error`, kb.text)
+  const errText = await page.locator(`${field('sheet-promo')} .ui-field__error`).textContent()
+  expect(errText === 'Введи промокод' && w.fieldBottom <= w.visibleBottom - 4, 'ошибка под полем появилась и тоже над клавиатурой')
+  const aria = await page.evaluate((sel) => {
+    const i = document.querySelector(`${sel} input`)
+    return { invalid: i.getAttribute('aria-invalid'), desc: document.getElementById(i.getAttribute('aria-describedby') ?? '')?.textContent }
+  }, field('sheet-promo'))
+  expect(aria.invalid === 'true' && aria.desc === 'Введи промокод', 'ошибка: aria-invalid, скринридер читает текст ошибки')
+  await page.keyboard.type('vesna')
+  expect((await page.locator(`${field('sheet-promo')} .ui-field__error`).textContent()) === '', 'начали исправлять — ошибка ушла')
+  await page.keyboard.press('Enter')
+  await settle()
+  expect(/VESNA отправлен из шторки/.test(await page.locator('[data-live="field"]').textContent()) && (await page.locator('.layer:not([data-closing])').count()) === 0, 'шторка: Enter применяет промокод и закрывает шторку')
+  await page.evaluate(() => window.__kb.close())
+  await settle()
+
+  // 7. Android: клавиатура ужимает сам экран (interactive-widget=resizes-content)
+  {
+    await page.evaluate(() => {
+      const z = document.querySelector('.app-content')
+      z.scrollTop = z.scrollHeight
+    })
+    await page.locator(`${field('promo')} input`).focus()
+    await page.setViewportSize({ width: c.width, height: H - kb.text })
+    await settle()
+    const a = await page.evaluate(
+      ({ sel, h }) => {
+        const f = document.querySelector('.app-shell')
+        const r = document.querySelector(sel).getBoundingClientRect()
+        return { bottom: r.bottom, top: r.top, zoneTop: document.querySelector('.app-header').getBoundingClientRect().bottom, frame: f.getBoundingClientRect().bottom, keyboard: f.dataset.keyboard ?? '', h }
+      },
+      { sel: field('promo'), h: H - kb.text },
+    )
+    expect(Math.abs(a.frame - a.h) <= 1 && a.top >= a.zoneTop - 1 && a.bottom <= a.h - 8 && a.keyboard === 'open', 'Android (экран ужался): поле над клавиатурой, таббар спрятан')
+    await page.evaluate(() => document.activeElement?.blur())
+    await page.setViewportSize({ width: c.width, height: H })
+    await settle()
+  }
+  await page.evaluate(() => document.querySelector('.kb-test-tab')?.remove())
 }
 
 /**

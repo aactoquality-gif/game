@@ -73,12 +73,17 @@ export type UiTarget = (typeof UI_TARGETS)[number]
 /** Привязка кнопки к аналитике */
 export interface Tap {
   readonly target: UiTarget
-  readonly value?: string | number
+  /**
+   * Значение; функция — для переключателей: считается в момент нажатия, до смены состояния
+   * (переключатель передаёт, каким он станет: on / off)
+   */
+  readonly value?: string | number | (() => string | number)
   /** Нажатие уже пишет продуктовое событие (choice_made) — ui_tap не отправлять */
   readonly silent?: boolean
 }
 
 export function trackTap(tap: Tap): void {
   if (tap.silent) return
-  track('ui_tap', tap.value === undefined ? { target: tap.target } : { target: tap.target, value: tap.value })
+  const value = typeof tap.value === 'function' ? tap.value() : tap.value
+  track('ui_tap', value === undefined ? { target: tap.target } : { target: tap.target, value })
 }
