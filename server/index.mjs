@@ -288,6 +288,7 @@ function handleStats(url, res) {
   res.end(renderHtml(report, { verifyOn: !!BOT_TOKEN, dataDir: DATA_DIR, from: fromStr, exclude: excludeStr }))
 }
 
+/** Отдать events.jsonl целиком: файла нет — пустой 200; есть, но не читается — 500 */
 function handleRawEvents(url, res) {
   const headers = {
     'Content-Type': 'application/x-ndjson; charset=utf-8',
@@ -344,6 +345,7 @@ function sendFile(res, filePath, headers) {
 // Статика
 // ---------------------------------------------------------------------------
 
+/** Отдать статику из dist/ (с SPA fallback на index.html), либо только заголовки на HEAD */
 function serveStatic(req, res, pathname) {
   let decoded
   try {

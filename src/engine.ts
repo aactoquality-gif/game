@@ -42,6 +42,7 @@ export async function initEngine(): Promise<void> {
 /** Сколько ждать каталог или эпизод: дольше — ошибка с «Попробовать снова», а не вечный спиннер */
 const LOAD_TIMEOUT_MS = 10_000
 
+/** Загрузить JSON из content/: нет ответа дольше LOAD_TIMEOUT_MS — ошибка тайм-аута, а не вечное ожидание */
 async function fetchJson<T>(file: string): Promise<T> {
   // Тайм-аут на весь путь: ответ сервера и чтение тела
   const controller = new AbortController()
