@@ -63,6 +63,8 @@ export const UI_TARGETS = [
   'dialog.reread',
   // Экран ошибки загрузки
   'error.retry',
+  // Стенд компонентов kit.html (только dev и check:ui): в игре не встречается; value — пример на стенде
+  'kit.demo',
 ] as const
 
 export type UiTarget = (typeof UI_TARGETS)[number]

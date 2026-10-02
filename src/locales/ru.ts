@@ -23,6 +23,13 @@ export const ru = {
   // Каркас
   'shell.tabbar': 'Основная навигация',
 
+  // Базовые компоненты (src/ui/kit): бейдж и подписи для скринридера у кнопок с бейджем
+  'kit.badgeOverflow': '{max}+',
+  'kit.badgeDot': 'Есть новое',
+  'kit.a11yCount': { one: '{label}: {count} новое', few: '{label}: {count} новых', many: '{label}: {count} новых', other: '{label}: {count} нового' },
+  'kit.a11yDot': '{label}: есть новое',
+  'kit.a11yLabel': '{label}: {badge}',
+
   // Ошибки загрузки
   'error.game': 'Не удалось загрузить игру. Проверь подключение к интернету.',
   'error.episode': 'Не удалось загрузить эпизод. Проверь подключение к интернету.',

@@ -1,0 +1,135 @@
+/* ==========================================================================
+   Кнопка-иконка — src/ui/kit/icon-button.ts
+   Кнопка — квадрат 44×44 (зона касания), виден круг 40 или 32 px (::before).
+   Отрицательные поля: в раскладке кнопка занимает только круг, зона касания выступает за него.
+   Цвета состояний — приватные переменные: --_bg (подложка), --_tint (оттенок «включена» поверх
+   подложки — складывается с наведением и нажатием), --_border, --_color (иконка).
+   color-mix — только внутри @supports: старые WebView получают сплошные цвета палитры.
+   Порядок блоков важен: вид → включена → наведение → нажатие → фокус → недоступна.
+   ========================================================================== */
+
+.ui-iconbtn {
+  --ui-iconbtn-size: 40px; /* видимый круг */
+  --ui-iconbtn-icon: 22px;
+  --_inset: calc((44px - var(--ui-iconbtn-size)) / 2);
+  --_bg: transparent;
+  --_tint: transparent;
+  --_border: transparent;
+  --_color: var(--text);
+
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin: calc(var(--_inset) * -1);
+  color: var(--_color); /* без border-radius: нажимается весь квадрат, а не вписанный круг */
+  transition: transform 0.12s ease, color 0.15s ease;
+}
+
+.ui-iconbtn[data-size='s'] {
+  --ui-iconbtn-size: 32px;
+  --ui-iconbtn-icon: 18px;
+}
+
+/* Видимый круг: под иконкой и бейджем (они позиционированы и идут в разметке после него) */
+.ui-iconbtn::before {
+  content: '';
+  position: absolute;
+  inset: var(--_inset);
+  border: 1px solid var(--_border);
+  border-radius: 50%;
+  background-color: var(--_bg);
+  background-image: linear-gradient(var(--_tint), var(--_tint));
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ui-iconbtn > .ui-iconbtn__icon {
+  position: relative;
+  width: var(--ui-iconbtn-icon);
+  height: var(--ui-iconbtn-icon);
+}
+
+/* --- Вид ------------------------------------------------------------------
+   plain — без подложки: хедер, таббар (значения по умолчанию выше)
+   tonal — на подложке: шторки, списки
+   glass — полупрозрачная, поверх арта сцены */
+.ui-iconbtn[data-variant='tonal'] {
+  --_bg: var(--surface-2);
+  --_border: var(--line-2);
+}
+.ui-iconbtn[data-variant='glass'] {
+  --_bg: var(--panel);
+  --_border: var(--line-2);
+}
+.ui-iconbtn[data-variant='glass']::before {
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+}
+
+/* --- Включена (переключатель): режим вкл или открыта панель --------------- */
+.ui-iconbtn[aria-pressed='true'],
+.ui-iconbtn[aria-expanded='true'] {
+  --_border: var(--brass);
+  --_color: var(--brass-hi);
+}
+
+@supports (color: color-mix(in srgb, red, blue)) {
+  .ui-iconbtn[data-variant='glass'] {
+    --_bg: color-mix(in srgb, var(--bg) 55%, transparent);
+  }
+  .ui-iconbtn[aria-pressed='true'],
+  .ui-iconbtn[aria-expanded='true'] {
+    --_tint: color-mix(in srgb, var(--brass) 18%, transparent);
+    --_border: color-mix(in srgb, var(--brass) 50%, transparent);
+  }
+}
+
+/* --- Наведение — только мышью: на сенсорном экране оно «залипает» после касания --- */
+@media (hover: hover) {
+  .ui-iconbtn[data-variant='plain']:not(:disabled):hover,
+  .ui-iconbtn[data-variant='glass']:not(:disabled):hover {
+    --_bg: var(--surface-2);
+  }
+  .ui-iconbtn[data-variant='tonal']:not(:disabled):hover {
+    --_bg: var(--surface-3);
+  }
+}
+
+/* --- Нажатие --- */
+.ui-iconbtn:not(:disabled):active {
+  transform: scale(0.94);
+}
+.ui-iconbtn[data-variant]:not(:disabled):active {
+  --_bg: var(--surface-3);
+}
+
+/* --- Фокус с клавиатуры: кольцо вокруг круга, а не вокруг зоны касания --- */
+.ui-iconbtn:focus-visible {
+  outline: none;
+}
+.ui-iconbtn:focus-visible::before {
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 4px var(--brass);
+}
+
+/* --- Недоступна --- */
+.ui-iconbtn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* --- Бейдж в углу круга: счётчик растёт вправо, точка сидит на краю круга --- */
+.ui-iconbtn > .ui-iconbtn__badge {
+  position: absolute;
+  top: calc(var(--_inset) - 3px);
+  left: calc(50% + var(--ui-iconbtn-size) * 0.12);
+  pointer-events: none;
+}
+.ui-iconbtn > .ui-iconbtn__badge[data-kind='dot'] {
+  top: calc(var(--_inset) + var(--ui-iconbtn-size) * 0.14);
+  left: auto;
+  right: calc(var(--_inset) + var(--ui-iconbtn-size) * 0.14);
+}

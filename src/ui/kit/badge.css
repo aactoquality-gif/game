@@ -1,0 +1,65 @@
+/* ==========================================================================
+   Бейдж — src/ui/kit/badge.ts
+   Счётчик (кружок, от двух цифр — «пилюля»), точка «есть новое», короткая надпись.
+   Тон: accent — латунь (по умолчанию), alert — срочное, neutral — спокойный счётчик.
+   Обводка цветом подложки отделяет бейдж от иконки; подложку задаёт контейнер:
+   --ui-badge-ring: var(--surface) — например, в таббаре. По умолчанию — фон игры.
+   ========================================================================== */
+
+.ui-badge {
+  --ui-badge-h: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  min-width: var(--ui-badge-h);
+  height: var(--ui-badge-h);
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--brass);
+  color: var(--brass-ink);
+  font: 700 11px/1 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  vertical-align: middle;
+  box-shadow: 0 0 0 2px var(--ui-badge-ring, var(--bg));
+}
+
+/* hidden из setBadge: свой display перебил бы стиль браузера для [hidden] */
+.ui-badge[hidden] {
+  display: none;
+}
+
+/* --- Тон --- */
+.ui-badge[data-tone='alert'] {
+  background: var(--danger);
+  color: var(--brass-ink);
+}
+.ui-badge[data-tone='neutral'] {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+/* --- Вид --- */
+.ui-badge[data-kind='dot'] {
+  --ui-badge-h: 8px;
+  width: var(--ui-badge-h);
+  padding: 0;
+}
+
+.ui-badge[data-kind='label'] {
+  padding: 0 6px;
+  font: 700 10px/1 var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Текст для скринридера у отдельно стоящей точки: на экране его нет */
+.ui-badge__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

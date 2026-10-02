@@ -7,6 +7,8 @@
  *   telegram — имитация Telegram WebApp: подписанный initData, системная «Назад»,
  *              облачное хранилище, отступ под home bar.
  *
+ * Плюс стенды через dev-сервер Vite: каркас (layout.html, CHECK_ONLY=shell) и компоненты (kit.html, CHECK_ONLY=kit).
+ *
  * ✗ ошибка    — проверка красная (код выхода 1).
  * ! замечание — не ломает проверку, но попадает в отчёт: это кандидаты в отдельные задачи.
  *
@@ -563,8 +565,8 @@ async function runCase(browser, baseUrl, apiLog, vp, mode) {
     expect(tapTargets.has('reading.pause'), 'аналитика: нажатие на меню паузы (ui_tap reading.pause)')
     expect(!tapTargets.has('reading.choice'), 'аналитика: выбор пишется только choice_made, без дубля ui_tap')
     if (mode === 'browser') expect(tapTargets.has('story.back'), 'аналитика: нажатие кнопки «Назад» на экране истории (story.back)')
-    const unknownTargets = [...tapTargets].filter((x) => !UI_TARGETS.includes(x))
-    expect(unknownTargets.length === 0, `аналитика: цели нажатий только из каталога${unknownTargets.length ? ` — чужие: ${unknownTargets.join(', ')}` : ''}`)
+    const unknownTargets = [...tapTargets].filter((x) => !UI_TARGETS.includes(x) || DEV_TARGETS.includes(x))
+    expect(unknownTargets.length === 0, `аналитика: цели нажатий только из каталога, без целей стенда${unknownTargets.length ? ` — чужие: ${unknownTargets.join(', ')}` : ''}`)
     if (full) expect(names.has('episode_complete'), 'аналитика: episode_complete')
     const platforms = [...new Set(events.map((e) => e.platform))]
     expect(platforms.length === 1 && platforms[0] === mode, `аналитика: платформа во всех событиях — ${mode} (есть: ${platforms.join(', ') || 'нет событий'})`)
@@ -664,8 +666,8 @@ async function runConfigOffline(browser, baseUrl) {
 // ---------------------------------------------------------------------------
 
 const SRC = resolve('src')
-// layout/preview.ts — стенд каркаса (layout.html), в сборку игры не входит
-const I18N_EXEMPT = [/^locales[\\/]/, /^api\.mock\.ts$/, /^layout[\\/]preview\.ts$/]
+// layout/preview.ts и ui/kit/preview.ts — стенды каркаса (layout.html) и компонентов (kit.html), в сборку игры не входят
+const I18N_EXEMPT = [/^locales[\\/]/, /^api\.mock\.ts$/, /^layout[\\/]preview\.ts$/, /^ui[\\/]kit[\\/]preview\.ts$/]
 
 function listTs(dir) {
   return readdirSync(dir, { withFileTypes: true }).flatMap((d) =>
@@ -1038,6 +1040,487 @@ async function runStandCase(browser, standUrl, c) {
 }
 
 // ---------------------------------------------------------------------------
+// Стенд компонентов (kit.html): кнопка-иконка, бейдж, чип во всех состояниях.
+// Наведение, нажатие и фокус на стенде «заморожены» атрибутом data-pseudo (копии правил компонентов).
+// Проверяется, что каждое состояние есть и выглядит иначе, чем обычное; зоны касания; контраст;
+// подписи для скринридера; аналитика; всё внутри кадра; живые примеры — настоящими нажатиями.
+// На десктопе (мышь) — что настоящие наведение, нажатие и фокус совпадают с замороженными;
+// на телефоне — что наведение не «залипает».
+// ---------------------------------------------------------------------------
+
+const KIT_CASES = [
+  { id: 'kit-320', label: 'компоненты', width: 320, height: 568, mobile: true },
+  { id: 'kit-390', label: 'компоненты', width: 390, height: 844, mobile: true, hitShot: true },
+  { id: 'kit-1440', label: 'компоненты · мышь и клавиатура', width: 1440, height: 900, mobile: false },
+]
+
+const KIT_ICON_STATES = ['default', 'hover', 'active', 'focus', 'on', 'disabled']
+const KIT_BADGES_ON_BUTTON = ['dot', 'count-1', 'count-12', 'overflow', 'label', 'alert', 'zero']
+/** Строка стенда (data-row) → обязательные состояния (data-state) */
+const KIT_ROWS = {
+  'iconbtn-plain-m': KIT_ICON_STATES,
+  'iconbtn-tonal-m': KIT_ICON_STATES,
+  'iconbtn-glass-m': KIT_ICON_STATES,
+  'iconbtn-plain-s': KIT_ICON_STATES,
+  'iconbtn-tonal-s': KIT_ICON_STATES,
+  'iconbtn-badge-m': KIT_BADGES_ON_BUTTON,
+  'iconbtn-badge-s': KIT_BADGES_ON_BUTTON,
+  'badge-count': ['count-1', 'count-9', 'count-12', 'count-99', 'overflow', 'zero'],
+  'badge-tone': ['accent', 'alert', 'neutral', 'dot', 'dot-alert', 'label', 'label-neutral'],
+  'badge-ring': ['bg', 'surface', 'sheet'],
+  'chip-static': ['text', 'short', 'icon', 'count'],
+  'chip-action': ['default', 'hover', 'active', 'focus', 'disabled'],
+  'chip-filter': ['default', 'hover', 'active', 'focus', 'on', 'on-hover', 'disabled'],
+  'chip-extra': ['count-off', 'count-on', 'long'],
+}
+/** Цели нажатий стенда: в каталоге есть, но в игре встречаться не должны */
+const DEV_TARGETS = ['kit.demo']
+
+function measureKit(rows) {
+  const q = (s, root = document) => root.querySelector(s)
+  const cell = (row, state) => q(`[data-row="${row}"] [data-state="${state}"]`)
+  const r = (el) => {
+    const b = el.getBoundingClientRect()
+    return { left: b.left, top: b.top, right: b.right, bottom: b.bottom, width: b.width, height: b.height }
+  }
+  const label = (el) => `.${[...el.classList].slice(0, 2).join('.')}`
+
+  // --- Цвета и контраст (WCAG): разбор computed-цветов, наложение полупрозрачных слоёв ---
+  const parseColor = (s) => {
+    if (!s || s === 'transparent' || s === 'none') return [0, 0, 0, 0]
+    let m = s.match(/rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)/)
+    if (m) return [+m[1], +m[2], +m[3], m[4] === undefined ? 1 : +m[4]]
+    m = s.match(/color\(srgb ([\d.e-]+) ([\d.e-]+) ([\d.e-]+)(?: \/ ([\d.]+))?\)/)
+    if (m) return [m[1] * 255, m[2] * 255, m[3] * 255, m[4] === undefined ? 1 : +m[4]]
+    return null
+  }
+  const over = (top, bottom) => {
+    const a = top[3] + bottom[3] * (1 - top[3])
+    if (a === 0) return [0, 0, 0, 0]
+    const ch = (i) => (top[i] * top[3] + bottom[i] * bottom[3] * (1 - top[3])) / a
+    return [ch(0), ch(1), ch(2), a]
+  }
+  const lum = ([R, G, B]) => {
+    const f = (c) => {
+      const v = c / 255
+      return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
+    }
+    return 0.2126 * f(R) + 0.7152 * f(G) + 0.0722 * f(B)
+  }
+  const ratio = (a, b) => {
+    const [l1, l2] = [lum(a), lum(b)].sort((x, y) => y - x)
+    return Math.round(((l1 + 0.05) / (l2 + 0.05)) * 100) / 100
+  }
+  /** Фон под элементом: подложка компонента (::before) поверх фонов предков, снизу — фон игры */
+  const backdrop = (el, ownLayers = true) => {
+    const layers = []
+    if (ownLayers) {
+      const b = getComputedStyle(el, '::before')
+      const tint = b.backgroundImage.match(/(rgba?\([^)]*\)|color\([^)]*\))/)
+      if (tint) layers.push(parseColor(tint[1]))
+      layers.push(parseColor(b.backgroundColor))
+    }
+    for (let n = el.parentElement; n; n = n.parentElement) {
+      const c = parseColor(getComputedStyle(n).backgroundColor)
+      if (c && c[3] > 0) layers.push(c)
+      if (c && c[3] === 1) break
+    }
+    let acc = parseColor(getComputedStyle(document.body).backgroundColor)
+    for (const layer of layers.reverse()) if (layer) acc = over(layer, acc)
+    return acc
+  }
+
+  // --- Подпись состояния: всё, чем состояния отличаются друг от друга на экране ---
+  const sig = (el) => {
+    const b = getComputedStyle(el, '::before')
+    const s = getComputedStyle(el)
+    return {
+      bg: b.backgroundColor,
+      tint: b.backgroundImage,
+      border: b.borderTopColor,
+      ring: b.boxShadow,
+      transform: s.transform,
+      opacity: s.opacity,
+      color: s.color,
+      // видимый круг / «пилюля» — вместе с рамкой
+      visualW: parseFloat(b.width) + parseFloat(b.borderLeftWidth) + parseFloat(b.borderRightWidth),
+      visualH: parseFloat(b.height) + parseFloat(b.borderTopWidth) + parseFloat(b.borderBottomWidth),
+      margin: parseFloat(s.marginTop),
+      // размеры без transform: у «нажатия» кнопка сжата scale(0.94), зона касания та же
+      width: el.offsetWidth,
+      height: el.offsetHeight,
+    }
+  }
+
+  const missing = []
+  for (const [row, states] of Object.entries(rows)) {
+    for (const st of states) if (!cell(row, st)) missing.push(`${row}/${st}`)
+  }
+
+  const iconRows = Object.keys(rows).filter((x) => /^iconbtn-(plain|tonal|glass)-/.test(x))
+  const icon = {}
+  for (const row of iconRows) {
+    icon[row] = {}
+    for (const st of rows[row]) {
+      const el = q('.ui-iconbtn', cell(row, st) ?? document.createElement('i'))
+      if (el) icon[row][st] = sig(el)
+    }
+  }
+  const chips = {}
+  for (const row of ['chip-action', 'chip-filter']) {
+    chips[row] = {}
+    for (const st of rows[row]) {
+      const el = q('.ui-chip', cell(row, st) ?? document.createElement('i'))
+      if (el) chips[row][st] = sig(el)
+    }
+  }
+
+  // --- Бейджи ---
+  const badgeOf = (row, st) => q('.ui-badge', cell(row, st) ?? document.createElement('i'))
+  const shown = (el) => !!el && getComputedStyle(el).display !== 'none'
+  const onButton = {}
+  for (const row of ['iconbtn-badge-m', 'iconbtn-badge-s']) {
+    onButton[row] = {}
+    for (const st of rows[row]) {
+      const btn = q('.ui-iconbtn', cell(row, st) ?? document.createElement('i'))
+      const mark = btn && q('.ui-badge', btn)
+      if (!btn || !mark) continue
+      const br = btn.getBoundingClientRect()
+      const mr = mark.getBoundingClientRect()
+      onButton[row][st] = {
+        aria: btn.getAttribute('aria-label') ?? '',
+        title: btn.title,
+        text: mark.textContent,
+        shown: shown(mark),
+        ariaHidden: mark.getAttribute('aria-hidden') === 'true',
+        // бейдж касается круга, а не висит в стороне: пересекается с квадратом кнопки
+        touches: shown(mark) ? mr.left < br.right && mr.right > br.left && mr.top < br.bottom && mr.bottom > br.top : true,
+      }
+    }
+  }
+  const one = badgeOf('badge-count', 'count-1')
+  const twelve = badgeOf('badge-count', 'count-12')
+  const dot = badgeOf('badge-tone', 'dot')
+  const badges = {
+    overflow: badgeOf('badge-count', 'overflow')?.textContent ?? '',
+    zeroHidden: !shown(badgeOf('badge-count', 'zero')),
+    oneCircle: !!one && Math.abs(one.offsetWidth - one.offsetHeight) <= 1,
+    twelvePill: !!twelve && twelve.offsetWidth > twelve.offsetHeight,
+    dot: dot ? [dot.offsetWidth, dot.offsetHeight] : [0, 0],
+    dotSr: dot?.textContent ?? '',
+    rings: ['bg', 'surface', 'sheet'].map((s) => {
+      const c = cell('badge-ring', s)
+      const mark = c && q('.ui-badge', c)
+      return mark ? { ring: getComputedStyle(mark).boxShadow, surface: getComputedStyle(c).backgroundColor } : null
+    }),
+  }
+
+  // --- Контраст: текст бейджей и чипов ≥ 4.5, иконка ≥ 3 (графика, WCAG 1.4.11) ---
+  const contrast = []
+  const text = (what, el, min = 4.5, own = true) => {
+    if (!el) return contrast.push({ what, ratio: 0, min })
+    const fg = parseColor(getComputedStyle(el).color)
+    const bg = own === 'badge' ? parseColor(getComputedStyle(el).backgroundColor) : backdrop(el, own)
+    contrast.push({ what, ratio: ratio(fg, bg), min })
+  }
+  for (const st of ['accent', 'alert', 'neutral', 'label', 'label-neutral']) text(`бейдж ${st}`, badgeOf('badge-tone', st), 4.5, 'badge')
+  text('чип-метка', q('.ui-chip', cell('chip-static', 'text') ?? document.createElement('i')))
+  text('чип-действие', q('.ui-chip', cell('chip-action', 'default') ?? document.createElement('i')))
+  text('чип-фильтр', q('.ui-chip', cell('chip-filter', 'default') ?? document.createElement('i')))
+  text('чип-фильтр выбран', q('.ui-chip', cell('chip-filter', 'on') ?? document.createElement('i')))
+  text('кнопка-иконка plain', q('.ui-iconbtn', cell('iconbtn-plain-m', 'default') ?? document.createElement('i')), 3)
+  text('кнопка-иконка tonal', q('.ui-iconbtn', cell('iconbtn-tonal-m', 'default') ?? document.createElement('i')), 3)
+  text('кнопка-иконка включена', q('.ui-iconbtn', cell('iconbtn-plain-m', 'on') ?? document.createElement('i')), 3)
+
+  // --- Чипы: галочка у выбранного, счётчик, длинный текст ---
+  const onChip = q('.ui-chip', cell('chip-filter', 'on') ?? document.createElement('i'))
+  const offChip = q('.ui-chip', cell('chip-filter', 'default') ?? document.createElement('i'))
+  const countOn = q('.ui-chip__count', cell('chip-extra', 'count-on') ?? document.createElement('i'))
+  const longCell = cell('chip-extra', 'long')
+  const longChip = longCell && q('.ui-chip', longCell)
+  const longText = longChip && q('.ui-chip__text', longChip)
+  const staticChip = q('.ui-chip', cell('chip-static', 'text') ?? document.createElement('i'))
+  const chipExtra = {
+    checkOn: !!onChip && shown(q('.ui-chip__check', onChip)),
+    checkOff: !!offChip && shown(q('.ui-chip__check', offChip)),
+    pressedOn: onChip?.getAttribute('aria-pressed'),
+    pressedOff: offChip?.getAttribute('aria-pressed'),
+    countOnBg: countOn ? getComputedStyle(countOn).backgroundColor : '',
+    brass: getComputedStyle(document.documentElement).getPropertyValue('--brass').trim(),
+    longTruncated: !!longText && longText.scrollWidth > longText.clientWidth + 1,
+    longInside: !!longChip && longChip.getBoundingClientRect().right <= longCell.getBoundingClientRect().right + 1,
+    staticH: staticChip ? staticChip.getBoundingClientRect().height : 0,
+    staticTag: staticChip?.tagName ?? '',
+  }
+
+  // --- Доступность и аналитика ---
+  const allIconBtns = [...document.querySelectorAll('.ui-iconbtn')]
+  const groups = [...document.querySelectorAll('.ui-chips')]
+  const filters = [...document.querySelectorAll('.ui-chip[data-kind="filter"]')]
+  const a11y = {
+    unlabeled: allIconBtns.filter((b) => !(b.getAttribute('aria-label') ?? '').trim()).length,
+    groupsOk: groups.length > 0 && groups.every((g) => g.getAttribute('role') === 'group' && (g.getAttribute('aria-label') ?? '').trim()),
+    filtersPressed: filters.length > 0 && filters.every((c) => ['true', 'false'].includes(c.getAttribute('aria-pressed'))),
+    disabledNative: [...document.querySelectorAll('[data-state="disabled"] .ui-iconbtn, [data-state="disabled"] .ui-chip')].every((b) => b.disabled),
+  }
+  const buttons = [...document.querySelectorAll('button')]
+  const untracked = buttons.filter((b) => !b.disabled && !b.dataset.track).map(label)
+  const targets = [...new Set(buttons.map((b) => b.dataset.track).filter(Boolean))]
+  const small = [...new Set(buttons.filter((b) => b.offsetParent && (b.offsetWidth < 44 || b.offsetHeight < 44)).map(label))]
+
+  // --- Кадр ---
+  const shell = q('.app-shell')
+  const f = r(shell)
+  const outside = []
+  for (const el of document.querySelectorAll('.kit-spec, .kit-live, .kit-mock-header, .kit-list, .ui-iconbtn, .ui-chip, .ui-badge')) {
+    const b = el.getBoundingClientRect()
+    if (b.width === 0) continue
+    if (b.left < f.left - 1 || b.right > f.right + 1) outside.push(label(el))
+  }
+  const doc = document.scrollingElement
+
+  return {
+    ready: document.documentElement.dataset.kitReady,
+    missing,
+    icon,
+    chips,
+    onButton,
+    badges,
+    contrast,
+    chipExtra,
+    a11y,
+    untracked: [...new Set(untracked)],
+    targets,
+    small,
+    frame: f,
+    outside: [...new Set(outside)],
+    hScroll: doc.scrollWidth > innerWidth + 1,
+    docLocked: doc.scrollHeight <= innerHeight + 1,
+    headerShown: getComputedStyle(q('.app-header')).display !== 'none',
+    tabbarShown: getComputedStyle(q('.app-tabbar')).display !== 'none',
+  }
+}
+
+/** Подпись состояния без размеров — для сравнения «выглядит иначе / так же» */
+const look = (s) => (s ? JSON.stringify([s.bg, s.tint, s.border, s.ring, s.transform, s.opacity, s.color]) : '')
+
+async function runKitCase(browser, kitUrl, c) {
+  const vp = { id: c.id, width: c.width, height: c.height, mobile: c.mobile }
+  const { res, context, page, expect, fail } = await openCase(browser, vp, 'browser', { id: c.id, label: c.label })
+  const ICON_SIZE = { m: 40, s: 32 }
+  try {
+    await page.goto(kitUrl)
+    await page.waitForSelector('[data-kit-ready]')
+    await page.waitForTimeout(400) // переходы (transition) закончились
+    const m = await page.evaluate(measureKit, KIT_ROWS)
+
+    // 1. Все состояния на стенде
+    expect(Number(m.ready) > 0, `стенд: замороженные состояния подключены (правил: ${m.ready})`)
+    expect(m.missing.length === 0, `стенд: все состояния на месте${m.missing.length ? ` — нет: ${m.missing.join(', ')}` : ''}`)
+
+    // 2. Кнопка-иконка: каждое состояние видно, зона касания 44, круг 40 / 32
+    for (const [row, st] of Object.entries(m.icon)) {
+      const size = ICON_SIZE[row.endsWith('-s') ? 's' : 'm']
+      const d = st.default
+      const differs = (x) => look(st[x]) !== look(d)
+      expect(differs('hover') && st.hover.bg !== d.bg, `${row}: наведение видно`)
+      expect(differs('active') && st.active.transform !== 'none', `${row}: нажатие видно (подложка и сжатие)`)
+      expect(st.focus.ring !== 'none' && d.ring === 'none', `${row}: фокус с клавиатуры — кольцо`)
+      expect(st.on.color !== d.color && st.on.border !== d.border, `${row}: «включена» — латунная иконка и обводка`)
+      expect(Number(st.disabled.opacity) < 1, `${row}: «недоступна» приглушена`)
+      const sizesOk = Object.values(st).every((s) => s.width === 44 && s.height === 44 && Math.round(s.visualW) === size && Math.round(s.visualH) === size)
+      expect(sizesOk, `${row}: зона касания 44×44, виден круг ${size} px`)
+      expect(Math.round(d.margin) === -(44 - size) / 2, `${row}: в раскладке занимает только круг (поля ${-(44 - size) / 2} px)`)
+    }
+
+    // 3. Бейдж на кнопке: подпись для скринридера и всплывашка
+    for (const [row, st] of Object.entries(m.onButton)) {
+      const ok =
+        st.dot?.shown && /есть новое/.test(st.dot.aria) &&
+        st['count-1']?.text === '1' && /: 1 новое$/.test(st['count-1'].aria) &&
+        st['count-12']?.text === '12' && /: 12 новых$/.test(st['count-12'].aria) &&
+        st.overflow?.text === '99+' && /: 120 новых$/.test(st.overflow.aria) &&
+        st.label?.text === 'Новое' && /: Новое$/.test(st.label.aria) &&
+        st.zero && !st.zero.shown && st.zero.aria === 'Уведомления'
+      expect(!!ok, `${row}: бейдж и подпись для скринридера («Уведомления: 120 новых», при 0 — без бейджа)`)
+      const vals = Object.values(st)
+      expect(vals.length > 0 && vals.every((s) => s.ariaHidden && s.title === s.aria), `${row}: бейдж скрыт от скринридера, всплывашка = подпись`)
+      expect(vals.every((s) => s.touches), `${row}: бейдж сидит на кнопке`)
+    }
+
+    // 4. Бейдж отдельно
+    const b = m.badges
+    expect(b.overflow === '99+' && b.zeroHidden, 'бейдж: больше 99 — «99+», 0 — скрыт')
+    expect(b.oneCircle && b.twelvePill, 'бейдж: одна цифра — круг, две — «пилюля»')
+    expect(b.dot[0] === 8 && b.dot[1] === 8 && b.dotSr === 'Есть новое', 'бейдж: точка 8 px, для скринридера — «Есть новое»')
+    const ringsOk = b.rings.every((x) => x && x.ring.startsWith(x.surface))
+    expect(ringsOk, 'бейдж: обводка цветом подложки (фон, поверхность, шторка)')
+
+    // 5. Чип
+    for (const [row, st] of Object.entries(m.chips)) {
+      const d = st.default
+      expect(look(st.hover) !== look(d) && st.hover.bg !== d.bg, `${row}: наведение видно`)
+      expect(st.active.transform !== 'none', `${row}: нажатие видно (сжатие)`)
+      expect(st.focus.ring !== 'none' && d.ring === 'none', `${row}: фокус с клавиатуры — кольцо`)
+      expect(Number(st.disabled.opacity) < 1, `${row}: «недоступен» приглушён`)
+      expect(Object.values(st).every((s) => s.height === 44 && Math.round(s.visualH) === 32), `${row}: зона касания 44 px по высоте, видна «пилюля» 32 px`)
+    }
+    const f = m.chips['chip-filter']
+    expect(f.on.color !== f.default.color && f.on.border !== f.default.border, 'фильтр: «выбран» — латунный текст и обводка')
+    expect(look(f['on-hover']) !== look(f.on), 'фильтр: наведение на выбранный тоже видно')
+    const cx = m.chipExtra
+    expect(cx.checkOn && !cx.checkOff && cx.pressedOn === 'true' && cx.pressedOff === 'false', 'фильтр: выбранный — с галочкой и aria-pressed, не только цветом')
+    expect(cx.countOnBg && parseColorNode(cx.countOnBg) === parseColorNode(cx.brass), 'фильтр: счётчик выбранного — латунный')
+    expect(cx.longTruncated && cx.longInside, 'чип: длинный текст обрезается многоточием, чип не шире ряда')
+    expect(cx.staticTag === 'SPAN' && Math.round(cx.staticH) === 28, 'чип-метка: не кнопка, высота 28 px')
+
+    // 6. Контраст
+    const low = m.contrast.filter((x) => x.ratio < x.min)
+    expect(low.length === 0, `контраст: текст ≥ 4.5, иконки ≥ 3${low.length ? ` — мало: ${low.map((x) => `${x.what} ${x.ratio}`).join(', ')}` : ''}`)
+
+    // 7. Доступность, аналитика, зоны касания
+    expect(m.a11y.unlabeled === 0, 'у каждой кнопки-иконки есть подпись для скринридера')
+    expect(m.a11y.groupsOk && m.a11y.filtersPressed, 'группа фильтров — role="group" с подписью, у фильтров aria-pressed')
+    expect(m.a11y.disabledNative, '«недоступна» — настоящий disabled: не нажимается и не в порядке Tab')
+    expect(m.untracked.length === 0, `у каждой кнопки есть цель аналитики${m.untracked.length ? ` — нет у ${m.untracked.join(', ')}` : ''}`)
+    const foreign = m.targets.filter((x) => !UI_TARGETS.includes(x))
+    expect(foreign.length === 0, `цели нажатий из каталога${foreign.length ? ` — чужие: ${foreign.join(', ')}` : ''}`)
+    expect(m.small.length === 0, `все кнопки не меньше 44×44${m.small.length ? ` — меньше: ${m.small.join(', ')}` : ''}`)
+    // Скругление элемента сужает зону нажатия до вписанного круга — углы квадрата должны нажиматься
+    const cornerHit = (sel) =>
+      page.evaluate((s) => {
+        const el = document.querySelector(s)
+        el.scrollIntoView({ block: 'center' })
+        const b = el.getBoundingClientRect()
+        const corners = [
+          [b.left + 1.5, b.top + 1.5],
+          [b.right - 1.5, b.top + 1.5],
+          [b.left + 1.5, b.bottom - 1.5],
+          [b.right - 1.5, b.bottom - 1.5],
+        ]
+        return corners.every(([x, y]) => el.contains(document.elementFromPoint(x, y)))
+      }, sel)
+    expect(await cornerHit('[data-row="iconbtn-plain-m"] [data-state="default"] .ui-iconbtn'), 'кнопка-иконка нажимается во всём квадрате 44×44, включая углы')
+    expect(await cornerHit('[data-row="chip-filter"] [data-state="default"] .ui-chip'), 'чип нажимается во всей полосе 44 px, включая углы')
+
+    // 8. Кадр
+    expect(m.outside.length === 0, `всё внутри кадра${m.outside.length ? ` — снаружи: ${m.outside.join(', ')}` : ''}`)
+    expect(!m.hScroll && m.docLocked, 'документ зафиксирован, горизонтальной прокрутки нет')
+    expect(m.headerShown && !m.tabbarShown, 'каркас: хедер со стендом, пустой таббар скрыт')
+
+    // 9. Настоящие наведение, нажатие, фокус
+    const sigOf = (sel) =>
+      page.evaluate((s) => {
+        const el = document.querySelector(s)
+        const bf = getComputedStyle(el, '::before')
+        const cs = getComputedStyle(el)
+        return JSON.stringify([bf.backgroundColor, bf.backgroundImage, bf.borderTopColor, bf.boxShadow, cs.transform, cs.opacity, cs.color])
+      }, sel)
+    const realIcon = '[data-row="iconbtn-plain-m"] [data-state="default"] .ui-iconbtn'
+    const realChip = '[data-row="chip-filter"] [data-state="default"] .ui-chip'
+    const ic = m.icon['iconbtn-plain-m']
+    const ch = m.chips['chip-filter']
+    await page.locator(realIcon).scrollIntoViewIfNeeded()
+    await page.locator(realIcon).hover()
+    await page.waitForTimeout(300)
+    if (c.mobile) {
+      expect((await sigOf(realIcon)) === look(ic.default), 'телефон: наведение не «залипает» после касания')
+    } else {
+      expect((await sigOf(realIcon)) === look(ic.hover), 'мышь: настоящее наведение = замороженное на стенде')
+      await page.mouse.down()
+      await page.waitForTimeout(300)
+      const pressed = await sigOf(realIcon)
+      await page.mouse.up()
+      expect(pressed === look(ic.active), 'мышь: настоящее нажатие = замороженное')
+      await page.locator(realChip).scrollIntoViewIfNeeded()
+      await page.locator(realChip).hover()
+      await page.waitForTimeout(300)
+      expect((await sigOf(realChip)) === look(ch.hover), 'мышь: наведение на чип = замороженное')
+      await page.mouse.move(2, 2)
+      await page.keyboard.press('Tab')
+      await page.locator(realIcon).focus()
+      await page.waitForTimeout(300)
+      expect((await sigOf(realIcon)) === look(ic.focus), 'клавиатура: фокус на кнопке = замороженный')
+      await page.locator(realChip).focus()
+      await page.waitForTimeout(300)
+      expect((await sigOf(realChip)) === look(ch.focus), 'клавиатура: фокус на чипе = замороженный')
+    }
+
+    // 10. Живые примеры — настоящими нажатиями
+    const live = (sel) => page.locator(`[data-live-box] ${sel}`)
+    const bell = live('.ui-iconbtn[aria-expanded]')
+    await bell.scrollIntoViewIfNeeded()
+    await bell.click()
+    const afterOpen = await bell.evaluate((el) => ({ expanded: el.getAttribute('aria-expanded'), aria: el.getAttribute('aria-label'), badge: getComputedStyle(el.querySelector('.ui-badge')).display }))
+    expect(afterOpen.expanded === 'true' && afterOpen.badge === 'none' && afterOpen.aria === 'Уведомления', 'живой пример: открыли уведомления — панель открыта, бейдж ушёл')
+    await live('.ui-chip[data-kind="action"]').first().click()
+    await page.waitForTimeout(100)
+    const afterAdd = await bell.evaluate((el) => ({ aria: el.getAttribute('aria-label'), text: el.querySelector('.ui-badge').textContent }))
+    expect(afterAdd.text === '1' && afterAdd.aria === 'Уведомления: 1 новое', 'живой пример: новое уведомление — бейдж «1» и подпись обновились')
+    const big = live('.ui-iconbtn[aria-pressed]')
+    await big.click()
+    expect((await big.getAttribute('aria-pressed')) === 'true', 'живой пример: переключатель включается (aria-pressed)')
+
+    const genre = (name) => page.locator('[data-live-box="chip"] .ui-chip[data-kind="filter"]', { hasText: name })
+    const readout = page.locator('[data-live="chip"]')
+    await genre('Мистика').scrollIntoViewIfNeeded()
+    await genre('Мистика').click()
+    expect((await genre('Мистика').getAttribute('aria-pressed')) === 'true' && /Мистика/.test(await readout.textContent()), 'живой пример: фильтр выбирается касанием')
+    if (!c.mobile) {
+      await genre('Драма').focus()
+      await page.keyboard.press('Space')
+      const bySpace = await genre('Драма').getAttribute('aria-pressed')
+      await page.keyboard.press('Enter')
+      const byEnter = await genre('Драма').getAttribute('aria-pressed')
+      expect(bySpace === 'true' && byEnter === 'false', 'клавиатура: фильтр переключается пробелом и Enter')
+    }
+    await page.locator('[data-live-box="chip"] .ui-chip[data-kind="action"]').click()
+    const anyPressed = await page.locator('[data-live-box="chip"] .ui-chip[aria-pressed="true"]').count()
+    expect(anyPressed === 0 && (await readout.textContent()) === 'Ничего не выбрано', 'живой пример: «Сбросить» снимает все фильтры')
+
+    // 11. Скриншоты
+    if (c.mobile) {
+      // Каждый раздел целиком: кадр телефона растягивается на высоту раздела
+      const sections = await page.evaluate(() =>
+        [...document.querySelectorAll('[data-section]')].map((s) => ({ id: s.dataset.section, top: s.offsetTop, height: s.offsetHeight })),
+      )
+      const headerH = await page.evaluate(() => document.querySelector('.app-header').getBoundingClientRect().height)
+      const NAMES = { iconbtn: 'кнопка-иконка', badge: 'бейдж', chip: 'чип' }
+      const shotSection = async (s, name, file) => {
+        await page.setViewportSize({ width: c.width, height: Math.ceil(headerH + s.height + 24) })
+        await page.evaluate((top) => (document.querySelector('.app-content').scrollTop = top - 8), s.top)
+        await page.waitForTimeout(150)
+        await page.screenshot({ path: join(OUT, file) })
+        res.shots.push({ name, file })
+      }
+      for (const s of sections) await shotSection(s, NAMES[s.id] ?? s.id, `${c.id}-${s.id}.png`)
+      if (c.hitShot) {
+        await page.locator('.kit-controls .ui-chip').click()
+        await shotSection(sections[0], 'зоны касания 44 px', `${c.id}-hit.png`)
+      }
+    } else {
+      await page.evaluate(() => (document.querySelector('.app-content').scrollTop = 0))
+      await page.mouse.move(2, 2)
+      await page.waitForTimeout(200)
+      await page.screenshot({ path: join(OUT, `${c.id}.png`) })
+      res.shots.push({ name: 'стенд в кадре десктопа', file: `${c.id}.png` })
+    }
+  } catch (error) {
+    fail(`сценарий прерван: ${error.message.split('\n')[0]}`)
+  }
+  await context.close()
+  return res
+}
+
+/** Цвет из computed-строки или hex — в «r,g,b» для сравнения */
+function parseColorNode(s) {
+  const hex = s.match(/^#([0-9a-f]{6})$/i)
+  if (hex) return [0, 2, 4].map((i) => parseInt(hex[1].slice(i, i + 2), 16)).join(',')
+  const m = s.match(/rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)/)
+  return m ? [m[1], m[2], m[3]].map(Number).join(',') : s
+}
+
+// ---------------------------------------------------------------------------
 // Бюджет сборки
 // ---------------------------------------------------------------------------
 
@@ -1199,6 +1682,18 @@ async function main() {
         for (const c of standCases) logResult(await runStandCase(browser, standUrl, c))
       } finally {
         await stand.close()
+      }
+    }
+    const kitCases = KIT_CASES.filter((c) => selected(c.id))
+    if (kitCases.length) {
+      // Стенд компонентов тоже только в dev — свой dev-сервер Vite
+      const kit = await createServer({ logLevel: 'error', server: { host: '127.0.0.1', port: 5181, strictPort: false, hmr: false } })
+      await kit.listen()
+      const kitUrl = `${kit.resolvedUrls?.local?.[0] ?? 'http://127.0.0.1:5181/'}kit.html`
+      try {
+        for (const c of kitCases) logResult(await runKitCase(browser, kitUrl, c))
+      } finally {
+        await kit.close()
       }
     }
   } finally {
