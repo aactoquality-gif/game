@@ -39,11 +39,24 @@ export async function initEngine(): Promise<void> {
   save = saved ?? emptySave()
 }
 
+/** Сколько ждать каталог или эпизод: дольше — ошибка с «Попробовать снова», а не вечный спиннер */
+const LOAD_TIMEOUT_MS = 10_000
+
 async function fetchJson<T>(file: string): Promise<T> {
-  // no-cache: телефон каждый раз сверяется с сервером, чтобы не показывать старую версию
-  const response = await fetch(CONTENT_BASE + file, { cache: 'no-cache' })
-  if (!response.ok) throw new Error(`HTTP ${response.status} ${file}`)
-  return (await response.json()) as T
+  // Тайм-аут на весь путь: ответ сервера и чтение тела
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), LOAD_TIMEOUT_MS)
+  try {
+    // no-cache: телефон каждый раз сверяется с сервером, чтобы не показывать старую версию
+    const response = await fetch(CONTENT_BASE + file, { cache: 'no-cache', signal: controller.signal })
+    if (!response.ok) throw new Error(`HTTP ${response.status} ${file}`)
+    return (await response.json()) as T
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error(`Нет ответа за ${LOAD_TIMEOUT_MS / 1000} с: ${file}`)
+    throw error
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -117,10 +130,18 @@ function currentScene(): Scene | null {
 // ---------------------------------------------------------------------------
 
 /**
+ * Номер последнего открытия эпизода. Игрок ушёл с экрана загрузки (closeEpisode) или открыл другой эпизод —
+ * запоздавший ответ на старое открытие не меняет ни экран, ни прогресс.
+ */
+let openSeq = 0
+
+/**
  * Открыть эпизод. Если он уже начат — продолжить с сохранённого экрана.
  * restart: true — начать эпизод заново (счётчики — как на старте эпизода).
+ * Открытие отменили, пока эпизод грузился (closeEpisode или новое открытие), — ничего не делает.
  */
 export async function openEpisode(storyId: string, n: number, opts: { restart?: boolean } = {}): Promise<void> {
+  const seq = ++openSeq
   const meta = getStory(storyId)?.episodes.find((e) => e.n === n)
   if (!meta?.file) throw new Error(`Эпизод ${storyId}/${n} не вышел`)
 
@@ -129,6 +150,7 @@ export async function openEpisode(storyId: string, n: number, opts: { restart?: 
     chapter = await fetchJson<Chapter>(meta.file)
     chapterCache.set(meta.file, chapter)
   }
+  if (seq !== openSeq) return
 
   const p = save.stories[storyId] ?? emptyProgress(n)
   save.stories[storyId] = p
@@ -251,6 +273,7 @@ export function restartEpisode(): void {
 
 /** Выйти из чтения (в историю или меню). Прогресс уже сохранён на каждом экране */
 export function closeEpisode(): void {
+  openSeq++ // эпизод, который ещё грузится, не откроется
   if (!current) return
   track('episode_exit', { screens_viewed: getScreensInRun(), reason: 'menu' })
   updateContext({ inEpisode: false, screen: '' })

@@ -47,6 +47,12 @@ const ENDPOINT = '/api/events'
 const FLUSH_INTERVAL_MS = 10_000
 /** Потолок очереди: без сети события не должны копиться бесконечно */
 const MAX_BUFFER = 500
+/** Пачка — не больше, чем принимает сервер (MAX_EVENTS в server/index.mjs): пачку больше он отклоняет целиком */
+const MAX_BATCH = 100
+/** Ответы сервера, после которых пачку стоит отправить ещё раз: таймаут и перегрузка; плюс любой 5xx */
+const RETRY_STATUSES = [408, 429]
+/** Запрос без ответа дольше — считаем неудачным и возвращаем пачку в очередь */
+const SEND_TIMEOUT_MS = 20_000
 
 let platform: Platform = 'browser'
 let story = ''
@@ -61,6 +67,8 @@ const device = loadDeviceId()
 
 let buffer: AnalyticsEvent[] = []
 let flushTimer: ReturnType<typeof setInterval> | undefined
+/** Пачка уже в пути: следующая уходит после ответа, а не параллельно */
+let sending = false
 
 /** Счётчик экранов за текущий run в этой сессии */
 let screensInRun = 0
@@ -135,29 +143,54 @@ function onVisibilityChange(): void {
   }
 }
 
+/**
+ * Отправить очередь пачками по MAX_BATCH.
+ * Обычно — запросом, по одной пачке за раз: ответ пришёл — уходит следующая.
+ * При сворачивании и закрытии — sendBeacon (браузер доставит и после закрытия); браузер отказал
+ * (общий лимит 64 КБ) — одна пачка обычным запросом, остальное ждёт возвращения в игру.
+ */
 function flush(useBeacon: boolean): void {
-  if (buffer.length === 0) return
-
-  const events = buffer
-  buffer = []
-
-  const body = JSON.stringify({ initData, events })
-
   if (useBeacon && navigator.sendBeacon) {
-    const queued = navigator.sendBeacon(ENDPOINT, new Blob([body], { type: 'application/json' }))
-    if (queued) return
-    // Браузер отказал (например, лимит 64 КБ) — пробуем обычным запросом
+    while (buffer.length > 0) {
+      const events = buffer.slice(0, MAX_BATCH)
+      const body = JSON.stringify({ initData, events })
+      if (!navigator.sendBeacon(ENDPOINT, new Blob([body], { type: 'application/json' }))) break
+      buffer = buffer.slice(events.length)
+    }
   }
+  if (sending || buffer.length === 0) return
 
-  fetch(ENDPOINT, {
+  const events = buffer.slice(0, MAX_BATCH)
+  buffer = buffer.slice(events.length)
+  sending = true
+  post(events).then((delivered) => {
+    sending = false
+    if (!delivered) {
+      // Сеть или сервер недоступны — пачка возвращается в начало очереди, повтор — по таймеру
+      buffer = [...events, ...buffer].slice(-MAX_BUFFER)
+      return
+    }
+    if (buffer.length > 0) flush(false)
+  })
+}
+
+/**
+ * Пачка одним запросом. true — сервер её принял или отклонил окончательно (повтор не поможет);
+ * false — нет сети, нет ответа или сервер временно недоступен (RETRY_STATUSES, любой 5xx).
+ */
+function post(events: AnalyticsEvent[]): Promise<boolean> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS)
+  return fetch(ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body,
+    body: JSON.stringify({ initData, events }),
     keepalive: true,
-  }).catch(() => {
-    // Сеть недоступна — вернуть события в очередь для повторной отправки
-    buffer = [...events, ...buffer].slice(-MAX_BUFFER)
+    signal: controller.signal,
   })
+    .then((res) => res.ok || (res.status < 500 && !RETRY_STATUSES.includes(res.status)))
+    .catch(() => false)
+    .finally(() => clearTimeout(timer))
 }
 
 function randomId(): string {

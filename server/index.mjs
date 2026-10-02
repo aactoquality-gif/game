@@ -289,13 +289,55 @@ function handleStats(url, res) {
 }
 
 function handleRawEvents(url, res) {
-  res.writeHead(200, {
+  const headers = {
     'Content-Type': 'application/x-ndjson; charset=utf-8',
     'Content-Disposition': 'attachment; filename="events.jsonl"',
     'Cache-Control': 'no-store',
+  }
+  // Файла ещё нет — пустая выгрузка; файл есть, но не читается (права, каталог) — 500, а не пустой 200
+  try {
+    statSync(EVENTS_FILE)
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      console.error(`Не удалось проверить ${EVENTS_FILE}: ${err.code || err.message}`)
+      return sendJson(res, 500, { error: 'storage error' })
+    }
+    res.writeHead(200, headers)
+    return res.end()
+  }
+  sendFile(res, EVENTS_FILE, headers)
+}
+
+// ---------------------------------------------------------------------------
+// Файлы
+// ---------------------------------------------------------------------------
+
+/**
+ * Отдать файл потоком. Заголовки уходят вместе с первым куском файла, поэтому ошибка чтения
+ * (файл пропал, нет прав, на месте файла каталог) до начала ответа — 500, а не падение процесса;
+ * ошибка посреди ответа — обрыв соединения. Клиент ушёл — поток закрывается.
+ */
+function sendFile(res, filePath, headers) {
+  const stream = createReadStream(filePath)
+  const begin = () => {
+    if (!res.headersSent) res.writeHead(200, headers)
+  }
+  stream.on('data', (chunk) => {
+    begin()
+    if (!res.write(chunk)) stream.pause()
   })
-  if (!existsSync(EVENTS_FILE)) return res.end()
-  createReadStream(EVENTS_FILE).pipe(res)
+  res.on('drain', () => stream.resume())
+  stream.on('end', () => {
+    begin()
+    res.end()
+  })
+  stream.on('error', (err) => {
+    console.error(`Не удалось отдать файл ${filePath}: ${err.code || err.message}`)
+    if (res.headersSent) return res.destroy()
+    res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' })
+    res.end('Internal error')
+  })
+  res.on('close', () => stream.destroy())
 }
 
 // ---------------------------------------------------------------------------
@@ -335,13 +377,16 @@ function serveStatic(req, res, pathname) {
   // Хешированные ассеты Vite — навечно, остальное (index.html, главы) — сверяться с сервером
   const isHashed = filePath.includes(`${sep}assets${sep}`)
 
-  res.writeHead(200, {
+  const headers = {
     'Content-Type': MIME[ext] || 'application/octet-stream',
     'Cache-Control': isHashed ? 'public, max-age=31536000, immutable' : 'no-cache',
     'X-Content-Type-Options': 'nosniff',
-  })
-  if (req.method === 'HEAD') return res.end()
-  createReadStream(filePath).pipe(res)
+  }
+  if (req.method === 'HEAD') {
+    res.writeHead(200, headers)
+    return res.end()
+  }
+  sendFile(res, filePath, headers)
 }
 
 // ---------------------------------------------------------------------------

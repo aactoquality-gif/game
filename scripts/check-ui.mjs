@@ -299,7 +299,7 @@ function auditLayout({ minTap, safeBottom, zSelectors }) {
 // ---------------------------------------------------------------------------
 
 /** Новый прогон: результат, контекст браузера с имитацией Telegram, страница со слежением за ошибками */
-async function openCase(browser, vp, mode, { id, label = '', full = false, allowFailed = [] }) {
+async function openCase(browser, vp, mode, { id, label = '', full = false, allowFailed = [], allowConsole = [] }) {
   const res = { id, label, vp, mode, full, errors: [], warnings: [], passed: [], shots: [], screensSeen: 0 }
   const fail = (msg) => res.errors.push(msg)
   const warn = (msg) => {
@@ -333,6 +333,7 @@ async function openCase(browser, vp, mode, { id, label = '', full = false, allow
   page.on('console', (m) => {
     if (m.type() !== 'error') return
     if (m.text().startsWith('Failed to load resource')) return // разбирается в обработчике response
+    if (allowConsole.some((part) => m.text().includes(part))) return // ожидаемая ошибка сценария
     fail(`console.error: ${m.text()}`)
   })
   page.on('requestfailed', (r) => {
@@ -344,6 +345,7 @@ async function openCase(browser, vp, mode, { id, label = '', full = false, allow
     fail(`запрос не прошёл: ${r.url()} (${r.failure()?.errorText})`)
   })
   page.on('response', (r) => {
+    if (allowFailed.some((part) => r.url().includes(part))) return // сценарий сам отвечает ошибкой
     if (r.status() >= 400) warn(`файл не найден (${r.status()}): ${new URL(r.url()).pathname}`)
   })
 
@@ -678,6 +680,137 @@ async function runConfigOffline(browser, baseUrl) {
     const file = `${res.id}-reading.png`
     await page.screenshot({ path: join(OUT, file) })
     res.shots.push({ name: 'reading', file })
+  } catch (error) {
+    fail(`сценарий прерван: ${error.message.split('\n')[0]}`)
+  }
+  await context.close()
+  return res
+}
+
+/** Эпизод не отвечает → через 10 с ошибка с «Попробовать снова», а не вечный спиннер; повтор открывает эпизод */
+async function runLoadTimeout(browser, baseUrl) {
+  const vp = VIEWPORTS.find((v) => v.id === '390')
+  const { res, context, page, expect, fail } = await openCase(browser, vp, 'browser', {
+    id: '390-browser-load-timeout',
+    label: 'эпизод не отвечает: тайм-аут и повтор',
+    allowFailed: ['/content/ru/ch1.json'],
+    allowConsole: ['Не удалось открыть эпизод'],
+  })
+  try {
+    let hang = true
+    // Пока hang — запрос эпизода не получает ответа (как зависшая сеть)
+    await page.route('**/content/ru/ch1.json', (route) => (hang ? undefined : route.continue()))
+    const started = Date.now()
+    await page.goto(baseUrl)
+    await waitForScreen(page, (x) => x.screen === 'loading', 'загрузка эпизода')
+    await waitForScreen(page, (x) => x.screen === 'error', 'ошибка по тайм-ауту', 20000)
+    const waited = (Date.now() - started) / 1000
+    expect(waited >= 9 && waited <= 16, `зависший эпизод: через ~10 с ошибка, а не вечный спиннер (${waited.toFixed(1)} с)`)
+    expect(await page.locator('.error [data-track="error.retry"]').isVisible(), 'на ошибке есть «Попробовать снова»')
+    const file = `${res.id}-error.png`
+    await page.screenshot({ path: join(OUT, file) })
+    res.shots.push({ name: 'error', file })
+    hang = false
+    await page.locator('.error [data-track="error.retry"]').click()
+    const s = await waitForScreen(page, (x) => !['unknown', 'loading'].includes(x.screen), 'эпизод после повтора')
+    expect(['text', 'push', 'choice'].includes(s.screen), '«Попробовать снова» открывает эпизод')
+  } catch (error) {
+    fail(`сценарий прерван: ${error.message.split('\n')[0]}`)
+  }
+  await context.close()
+  return res
+}
+
+/** Ушли с загрузки эпизода («Назад»), ответ пришёл позже → эпизод не открывается поверх истории, прогресс не меняется */
+async function runLateLoad(browser, baseUrl) {
+  const vp = VIEWPORTS.find((v) => v.id === '390')
+  const { res, context, page, expect, fail } = await openCase(browser, vp, 'browser', {
+    id: '390-browser-load-late',
+    label: 'запоздавший эпизод после «Назад»',
+  })
+  try {
+    let release = () => {}
+    const gate = new Promise((done) => (release = done))
+    await page.route('**/content/ru/ch1.json', async (route) => {
+      await gate
+      await route.continue()
+    })
+    await page.goto(`${baseUrl}?debug`)
+    await waitForScreen(page, (x) => x.screen === 'loading', 'загрузка эпизода')
+    await page.keyboard.press('Escape')
+    await waitForScreen(page, (x) => x.screen === 'story', 'история после «Назад» во время загрузки')
+    const arrived = page.waitForResponse((r) => r.url().includes('/content/ru/ch1.json'))
+    release()
+    await arrived
+    await page.waitForTimeout(600)
+    expect((await page.evaluate(readScreen)).screen === 'story', 'запоздавший эпизод не открылся поверх истории')
+    expect((await readAppState(page))?.ui.route.name === 'story', 'маршрут остался «история»')
+    const saved = await page.evaluate(() => localStorage.getItem('game_state'))
+    const stories = saved ? JSON.parse(saved).stories ?? {} : {}
+    expect(Object.values(stories).every((p) => !p?.sceneId), 'прогресс не изменился: эпизод не начат')
+    const file = `${res.id}-story.png`
+    await page.screenshot({ path: join(OUT, file) })
+    res.shots.push({ name: 'story', file })
+  } catch (error) {
+    fail(`сценарий прерван: ${error.message.split('\n')[0]}`)
+  }
+  await context.close()
+  return res
+}
+
+/** Сервер аналитики отвечает 5xx, событий больше 100 → после восстановления всё доходит пачками ≤ 100, без потерь и дублей */
+async function runAnalyticsRetry(browser, baseUrl) {
+  const vp = VIEWPORTS.find((v) => v.id === '390')
+  const { res, context, page, expect, fail } = await openCase(browser, vp, 'browser', {
+    id: '390-browser-analytics-retry',
+    label: 'аналитика: 5xx и больше 100 событий → повтор пачками ≤ 100',
+    allowFailed: ['/api/events'],
+  })
+  try {
+    const SERVER_MAX = 100 // MAX_EVENTS в server/index.mjs
+    const TAPS = 110
+    let down = true
+    let refused = 0
+    const batches = []
+    // Ответы как у настоящего сервера: недоступен — 5xx (503 и нестандартный 520 по очереди); пачка больше 100 — 400 целиком
+    await page.route('**/api/events', (route) => {
+      if (down) {
+        refused++
+        return route.fulfill({ status: refused % 2 ? 503 : 520, contentType: 'application/json', body: '{"error":"unavailable"}' })
+      }
+      let events = []
+      try {
+        events = JSON.parse(route.request().postData() ?? '{}').events ?? []
+      } catch { /* пустое тело — пачка из 0 */ }
+      if (events.length > SERVER_MAX) return route.fulfill({ status: 400, contentType: 'application/json', body: '{"error":"too many events"}' })
+      batches.push(events)
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, accepted: events.length }) })
+    })
+    await page.goto(baseUrl)
+    await waitForScreen(page, (x) => ['text', 'push', 'choice'].includes(x.screen), 'эпизод')
+
+    // Больше 100 событий, пока сервер лежит: размер текста туда-обратно в меню паузы
+    await page.locator('.hud button').first().click()
+    await page.locator('.layer--sheet').waitFor()
+    await page.waitForTimeout(250)
+    for (let i = 0; i < TAPS; i++) await page.locator(`.layer .ui-seg [data-value="${i % 2 ? 'm' : 'l'}"]`).click()
+    await page.keyboard.press('Escape')
+    const refusedBefore = refused
+    const waitUntil = async (cond, ms) => {
+      const start = Date.now()
+      while (!cond() && Date.now() - start < ms) await page.waitForTimeout(200)
+      return cond()
+    }
+    expect(await waitUntil(() => refused > refusedBefore + 1, 25000), 'сервер недоступен: игра повторяет отправку очереди (получает 503 и 520)')
+
+    down = false
+    const sizeTaps = () => batches.flat().filter((e) => e.event === 'ui_tap' && e.data?.target === 'pause.textSize')
+    await waitUntil(() => sizeTaps().length >= TAPS, 30000)
+    expect(batches.every((b) => b.length <= SERVER_MAX), `каждая пачка — не больше ${SERVER_MAX} событий (${batches.map((b) => b.length).join(', ')})`)
+    expect(batches.length >= 2, 'больше 100 событий уходят несколькими пачками')
+    expect(sizeTaps().length === TAPS, `после 5xx доставлены все нажатия, без потерь и дублей (${sizeTaps().length} из ${TAPS})`)
+    const keys = batches.flat().map((e) => `${e.ts}|${e.event}|${e.data?.target ?? ''}|${e.data?.value ?? ''}`)
+    expect(new Set(keys).size === keys.length, 'ни одно событие не пришло дважды')
   } catch (error) {
     fail(`сценарий прерван: ${error.message.split('\n')[0]}`)
   }
@@ -2317,6 +2450,9 @@ async function main() {
       ['1440-browser-regress', (b, u) => runRegression(b, u, apiLog, '1440', 'browser')],
       ['320-telegram-regress', (b, u) => runRegression(b, u, apiLog, '320', 'telegram')],
       ['390-browser-migrate', runMigration],
+      ['390-browser-load-timeout', runLoadTimeout],
+      ['390-browser-load-late', runLateLoad],
+      ['390-browser-analytics-retry', runAnalyticsRetry],
     ]) {
       if (!selected(id)) continue
       logResult(await run(browser, baseUrl))

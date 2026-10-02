@@ -31,6 +31,8 @@ store.select(
 )
 
 let backAction: (() => void) | null = null
+/** Номер последнего открытия чтения: ошибка показывается только для него */
+let readRequest = 0
 
 function refreshNativeBack(): void {
   setNativeBack(hasOverlay() ? () => closeTopOverlay('back') : backAction)
@@ -109,8 +111,11 @@ export const nav: Nav = {
     setBack(() => nav.toStory(storyId))
     store.patch('ui', { route: { name: 'reading', storyId, episode } })
     renderLoading()
+    const request = ++readRequest
     openEpisode(storyId, episode, opts).catch((error) => {
       console.error('Не удалось открыть эпизод:', error)
+      // Игрок уже ушёл с экрана загрузки — ошибка старого запроса не должна закрыть новый экран
+      if (request !== readRequest || store.get().ui.route.name !== 'reading') return
       renderError(t('error.episode'), () => nav.read(storyId, episode, opts))
     })
   },
