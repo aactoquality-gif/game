@@ -1,6 +1,8 @@
 /**
  * Стенд компонентов: kit.html (только dev и check:ui, в сборку игры не входит).
  * Кнопка-иконка, бейдж и чип во всех состояниях — внутри кадра каркаса, как в игре.
+ * Шторка и диалог — живые: открываются через стек слоёв overlay.ts, «Назад» Telegram и Esc подключены
+ * так же, как в app.ts (в Telegram — системная кнопка в шапке).
  *   /kit.html       — стенд
  *   /kit.html?hit   — сразу с подсветкой зон касания
  *
@@ -16,11 +18,13 @@
 import '../../style.css'
 import './preview.css'
 import { createShell } from '../../layout/shell'
-import { h } from '../dom'
+import { button, h } from '../dom'
 import type { Tap } from '../../tracking'
 import { badge, type BadgeSpec } from './badge'
 import { iconButton, isIconButtonActive, setIconButtonActive, setIconButtonBadge, type IconButtonSize, type IconButtonVariant } from './icon-button'
 import { actionChip, chip, chipGroup, filterChip, isChipSelected, setChipSelected } from './chip'
+import { closeTopOverlay, confirmAction, hasOverlay, onOverlayChange, openBottomSheet, setOverlayHost, type CloseReason } from '../overlay'
+import { setNativeBack } from '../../telegram'
 
 type Pseudo = 'hover' | 'active' | 'focus-visible'
 
@@ -337,12 +341,134 @@ const chipSection = section('chip', 'Чип', 'Метка, действие и �
 ])
 
 // ---------------------------------------------------------------------------
+// Шторка и диалог (шаг 2.2): открываются по-настоящему, через стек слоёв overlay.ts
+// ---------------------------------------------------------------------------
+
+const REASONS: Record<CloseReason, string> = {
+  back: '«Назад»',
+  esc: 'Esc',
+  scrim: 'тап по фону',
+  swipe: 'жест вниз',
+  button: 'крестик',
+  action: 'кнопка внутри',
+  nav: 'переход',
+}
+
+function overlayLive(): HTMLElement {
+  const readout = h('p', { class: 'kit-readout', 'data-live': 'overlay', text: 'Ещё ничего не открывали' })
+  const say = (text: string): void => {
+    readout.textContent = text
+  }
+  const closed = (name: string) => (reason: CloseReason) => say(`Шторка «${name}» закрыта: ${REASONS[reason]} (${reason})`)
+  const ask = async (danger: boolean): Promise<boolean> => {
+    const ok = await confirmAction({
+      title: danger ? 'Начать эпизод сначала?' : 'Перечитать эпизод?',
+      text: danger ? 'Выборы этого эпизода сбросятся. Прочитанное в прошлых эпизодах сохранится.' : 'Прогресс сезона до этого эпизода сохранится.',
+      confirm: danger ? 'Начать сначала' : 'Перечитать',
+      danger,
+      tap: 'kit.demo',
+    })
+    say(`Диалог: ${ok ? 'подтвердили' : 'не подтвердили'}`)
+    return ok
+  }
+
+  const menu = (): void => {
+    let toStory = 0 // сколько раз сработала «К истории»: двойной тап должен засчитаться один раз
+    const sheet = openBottomSheet({
+      title: 'Намертво',
+      subtitle: 'Эпизод 1 · 35%',
+      tap: 'kit.demo',
+      onClose: closed('меню'),
+      content: [
+        h('div', { class: 'sheet__actions' }, [
+          button('btn btn--primary btn--block', 'Продолжить чтение', () => sheet.close(), {}, demo('sheet.continue')),
+          button(
+            'btn btn--secondary btn--block',
+            'К истории',
+            () => {
+              toStory += 1
+              sheet.close()
+              say(`«К истории» сработала: ${toStory}`)
+            },
+            { 'data-open': 'to-story' },
+            demo('sheet.toStory'),
+          ),
+          button(
+            'btn btn--danger btn--block',
+            'Начать эпизод сначала',
+            () => {
+              void ask(true).then((ok) => ok && sheet.close())
+            },
+            { 'data-open': 'nested' },
+            demo('sheet.restart'),
+          ),
+        ]),
+      ],
+    })
+  }
+  const long = (): void => {
+    openBottomSheet({
+      title: 'Длинная шторка',
+      subtitle: 'Шапка на месте, тело прокручивается',
+      tap: 'kit.demo',
+      onClose: closed('длинная'),
+      content: [
+        h(
+          'div',
+          { class: 'kit-list' },
+          Array.from({ length: 24 }, (_, i) => h('div', { class: 'kit-list__row', 'data-row-n': String(i + 1) }, [h('span', { text: `Настройка ${i + 1}` })])),
+        ),
+      ],
+    })
+  }
+  const plain = (): void => {
+    openBottomSheet({
+      title: 'Без крестика',
+      tap: 'kit.demo',
+      closeButton: false,
+      onClose: closed('без крестика'),
+      content: [h('p', { class: 'kit-intro', text: 'Закрывается «Назад», Esc, тапом по фону или жестом вниз.' })],
+    })
+  }
+
+  const open = (id: string, text: string, onClick: () => void): HTMLElement => {
+    const el = actionChip({ text, onClick, tap: demo(`open.${id}`) })
+    el.dataset.open = id
+    return el
+  }
+  return h('div', { class: 'kit-live', 'data-live-box': 'overlay' }, [
+    chipGroup('Открыть', [
+      open('menu', 'Меню паузы', menu),
+      open('long', 'Длинная шторка', long),
+      open('plain', 'Без крестика', plain),
+      open('dialog', 'Диалог', () => void ask(false)),
+      open('danger', 'Опасный диалог', () => void ask(true)),
+    ]),
+    readout,
+  ])
+}
+
+const overlaySection = section(
+  'overlay',
+  'Шторка и диалог',
+  'Закрываются «Назад» Telegram, Esc, тапом по фону, крестиком; шторка — ещё жестом вниз за шапку. Сначала закрывается верхний слой.',
+  [overlayLive()],
+)
+
+// ---------------------------------------------------------------------------
 // Сборка
 // ---------------------------------------------------------------------------
 
 const params = new URLSearchParams(location.search)
 const shell = createShell(document.getElementById('app')!)
-shell.header.append(h('span', { class: 'kit-title', text: 'Компоненты · шаг 2.1' }))
+shell.header.append(h('span', { class: 'kit-title', text: 'Компоненты · шаги 2.1–2.2' }))
+
+// Слои — в кадр, «Назад» Telegram и Esc закрывают верхний слой: так же, как в app.ts
+setOverlayHost(shell.root)
+onOverlayChange(() => setNativeBack(hasOverlay() ? () => closeTopOverlay('back') : null))
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') closeTopOverlay('esc')
+})
 
 const hitToggle = filterChip({
   text: 'Зоны касания 44 px',
@@ -362,6 +488,7 @@ shell.content.append(
     iconSection,
     badgeSection,
     chipSection,
+    overlaySection,
   ]),
 )
 

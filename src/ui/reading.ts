@@ -124,6 +124,7 @@ function openPauseMenu(nav: Nav): void {
       },
     ],
     extra: textSizeControl(),
+    tap: 'pause.close',
   })
 }
 

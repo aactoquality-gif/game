@@ -25,6 +25,7 @@ export const ru = {
   'common.loading': 'Загрузка…',
   'common.retry': 'Попробовать снова',
   'common.cancel': 'Отмена',
+  'common.close': 'Закрыть',
   'common.back': 'Назад',
   'common.menu': 'Меню',
   'common.soon': 'Скоро',

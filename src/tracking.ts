@@ -54,11 +54,12 @@ export const UI_TARGETS = [
   'pause.toStory',
   'pause.restart', // открыть диалог «Начать сначала?»
   'pause.textSize', // value — s / m / l
+  'pause.close', // закрыть меню паузы; value — button (крестик) / back / esc / scrim (фон) / swipe (жест вниз)
   // Карточка конца эпизода
   'end.readNext', // value — номер следующего эпизода
   'end.toStory',
   'end.restart',
-  // Диалоги подтверждения: value — confirm / cancel
+  // Диалоги подтверждения: value — confirm / cancel; закрыли без ответа — back / esc / scrim
   'dialog.restart',
   'dialog.reread',
   // Экран ошибки загрузки

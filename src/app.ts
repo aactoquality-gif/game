@@ -33,7 +33,7 @@ store.select(
 let backAction: (() => void) | null = null
 
 function refreshNativeBack(): void {
-  setNativeBack(hasOverlay() ? () => closeTopOverlay() : backAction)
+  setNativeBack(hasOverlay() ? () => closeTopOverlay('back') : backAction)
   syncHistoryGuard()
 }
 
@@ -71,15 +71,16 @@ function setBack(action: (() => void) | null): void {
   refreshNativeBack()
 }
 
-export function goBack(): void {
-  if (closeTopOverlay()) return
+/** «Назад» — сначала верхний слой (шторка, диалог), потом экран выше. reason — для аналитики закрытия слоя */
+export function goBack(reason: 'back' | 'esc' = 'back'): void {
+  if (closeTopOverlay(reason)) return
   backAction?.()
 }
 
 onOverlayChange(refreshNativeBack)
 
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') goBack()
+  if (event.key === 'Escape') goBack('esc')
 })
 
 export const nav: Nav = {

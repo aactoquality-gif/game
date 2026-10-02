@@ -225,7 +225,7 @@ function auditLayout({ minTap, safeBottom, zSelectors }) {
     if (r.left < -1 || r.right > vw + 1) cutOff.push(label(el))
   }
   // Блоки текста тоже: экраны обрезают лишнее (overflow: hidden), и документ при этом не скроллится
-  for (const el of document.querySelectorAll('.panel, .choices, .push, .end-card, .continue-card, .folder, .episodes, .sheet, .dialog-box')) {
+  for (const el of document.querySelectorAll('.panel, .choices, .push, .end-card, .continue-card, .folder, .episodes, .sheet, .dialog-box, .ui-sheet, .ui-dialog')) {
     if (!visible(el)) continue
     const r = el.getBoundingClientRect()
     if (r.left < -1 || r.right > vw + 1) cutOff.push(label(el))
@@ -498,9 +498,14 @@ async function runCase(browser, baseUrl, apiLog, vp, mode) {
     await waitFor((x) => x.overlay, 'меню паузы')
     await page.waitForTimeout(250)
     await audit('pause')
+    expect(await page.evaluate(() => document.querySelector('.app-content').inert), 'пауза: экран под шторкой недоступен (inert) — ни тапа, ни Tab')
     await back()
     await waitFor((x) => !x.overlay, 'закрытие меню паузы')
     expect((await state()).screen === s.screen, '«Назад» закрывает меню паузы и оставляет в эпизоде')
+    expect(
+      await page.evaluate(() => !document.querySelector('.app-content').inert && !!document.activeElement?.closest('.hud')),
+      'пауза закрыта: экран снова доступен, фокус вернулся на кнопку меню',
+    )
 
     // 4. Полный эпизод — до карточки конца; иначе ещё один экран
     if (full) {
@@ -566,6 +571,11 @@ async function runCase(browser, baseUrl, apiLog, vp, mode) {
     expect(tapTargets.has('reading.pause'), 'аналитика: нажатие на меню паузы (ui_tap reading.pause)')
     expect(!tapTargets.has('reading.choice'), 'аналитика: выбор пишется только choice_made, без дубля ui_tap')
     if (mode === 'browser') expect(tapTargets.has('story.back'), 'аналитика: нажатие кнопки «Назад» на экране истории (story.back)')
+    const closeWay = mode === 'telegram' ? 'back' : 'esc'
+    expect(
+      taps.some((e) => e.data?.target === 'pause.close' && e.data?.value === closeWay),
+      `аналитика: как закрыли паузу — pause.close с value ${closeWay}`,
+    )
     const unknownTargets = [...tapTargets].filter((x) => !UI_TARGETS.includes(x) || DEV_TARGETS.includes(x))
     expect(unknownTargets.length === 0, `аналитика: цели нажатий только из каталога, без целей стенда${unknownTargets.length ? ` — чужие: ${unknownTargets.join(', ')}` : ''}`)
     if (full) expect(names.has('episode_complete'), 'аналитика: episode_complete')
@@ -827,6 +837,23 @@ async function runRegression(browser, baseUrl, apiLog, vpId, mode) {
     expect((await page.locator('.layer').count()) === 2, 'пауза: диалог «Начать сначала?» поверх шторки')
     expect(await layersInFrame(), 'шторка и диалог внутри кадра')
     await shot('restart-dialog')
+    // «Назад» (Telegram) / Esc закрывает только диалог — шторка паузы остаётся, фокус — на кнопке, открывшей диалог
+    const openLayers = () => page.evaluate(() => [...document.querySelectorAll('.layer')].filter((l) => !('closing' in l.dataset)).length)
+    if (mode === 'telegram') await page.evaluate(() => window.__check.pressBack())
+    else await page.keyboard.press('Escape')
+    await page.waitForTimeout(350)
+    expect((await openLayers()) === 1 && (await page.locator('.layer--sheet').count()) === 1, '«Назад» закрывает сначала диалог, шторка паузы остаётся')
+    expect((await page.evaluate(() => document.activeElement?.dataset.track)) === 'pause.restart', 'фокус вернулся на кнопку «Начать эпизод сначала»')
+    // Двойной тап по «Отмена»: второй тап не закрывает шторку под диалогом и не нажимает кнопку под ним
+    await page.locator('[data-track="pause.restart"]').click()
+    await page.locator('.layer--dialog').waitFor()
+    await page.waitForTimeout(250)
+    await page.locator('.layer--dialog .btn--secondary').dblclick()
+    await page.waitForTimeout(350)
+    expect((await openLayers()) === 1 && (await page.locator('.layer--sheet').count()) === 1, 'двойной тап по «Отмена» не закрывает шторку под диалогом')
+    await page.locator('[data-track="pause.restart"]').click()
+    await page.locator('.layer--dialog').waitFor()
+    await page.waitForTimeout(250)
     await page.locator('.layer--dialog .btn--danger').click()
     s = await waitForScreen(page, (x) => !x.overlay && x.text === firstText, 'эпизод с начала').catch(() => null)
     expect(!!s, 'рестарт возвращает на первый экран эпизода, слои закрыты')
@@ -869,7 +896,8 @@ async function runRegression(browser, baseUrl, apiLog, vpId, mode) {
     await page.waitForTimeout(400)
     const events = apiLog.filter((p) => p.caseId === id).flatMap((p) => p.events ?? [])
     const taps = events.filter((e) => e.event === 'ui_tap').map((e) => `${e.data?.target}${e.data?.value !== undefined ? `:${e.data.value}` : ''}`)
-    for (const need of ['pause.restart', 'dialog.restart:confirm', 'end.toStory', 'story.episodeReread:1', 'dialog.reread:cancel']) {
+    const dismissWay = mode === 'telegram' ? 'back' : 'esc'
+    for (const need of ['pause.restart', `dialog.restart:${dismissWay}`, 'dialog.restart:cancel', 'dialog.restart:confirm', 'end.toStory', 'story.episodeReread:1', 'dialog.reread:cancel']) {
       expect(taps.includes(need), `аналитика: ${need}`)
     }
     expect(taps.some((x) => x.startsWith('menu.folderSoon:')), 'аналитика: menu.folderSoon с историей')
@@ -1053,6 +1081,7 @@ const KIT_CASES = [
   { id: 'kit-320', label: 'компоненты', width: 320, height: 568, mobile: true },
   { id: 'kit-390', label: 'компоненты', width: 390, height: 844, mobile: true, hitShot: true },
   { id: 'kit-1440', label: 'компоненты · мышь и клавиатура', width: 1440, height: 900, mobile: false },
+  { id: 'kit-390-tg', label: 'компоненты · шторка и диалог в Telegram', width: 390, height: 844, mobile: true, mode: 'telegram', overlayOnly: true },
 ]
 
 const KIT_ICON_STATES = ['default', 'hover', 'active', 'focus', 'on', 'disabled']
@@ -1307,12 +1336,19 @@ const look = (s) => (s ? JSON.stringify([s.bg, s.tint, s.border, s.ring, s.trans
 
 async function runKitCase(browser, kitUrl, c) {
   const vp = { id: c.id, width: c.width, height: c.height, mobile: c.mobile }
-  const { res, context, page, expect, fail } = await openCase(browser, vp, 'browser', { id: c.id, label: c.label })
+  const mode = c.mode ?? 'browser'
+  const { res, context, page, expect, fail } = await openCase(browser, vp, mode, { id: c.id, label: c.label })
   const ICON_SIZE = { m: 40, s: 32 }
   try {
     await page.goto(kitUrl)
     await page.waitForSelector('[data-kit-ready]')
     await page.waitForTimeout(400) // переходы (transition) закончились
+    if (c.overlayOnly) {
+      // Telegram: компоненты 2.1 уже проверены в браузере — здесь только слои и системная «Назад»
+      await checkOverlays(page, c, expect, res)
+      await context.close()
+      return res
+    }
     const m = await page.evaluate(measureKit, KIT_ROWS)
 
     // 1. Все состояния на стенде
@@ -1479,14 +1515,17 @@ async function runKitCase(browser, kitUrl, c) {
     const anyPressed = await page.locator('[data-live-box="chip"] .ui-chip[aria-pressed="true"]').count()
     expect(anyPressed === 0 && (await readout.textContent()) === 'Ничего не выбрано', 'живой пример: «Сбросить» снимает все фильтры')
 
-    // 11. Скриншоты
+    // 11. Шторка и диалог
+    await checkOverlays(page, c, expect, res)
+
+    // 12. Скриншоты
     if (c.mobile) {
       // Каждый раздел целиком: кадр телефона растягивается на высоту раздела
       const sections = await page.evaluate(() =>
         [...document.querySelectorAll('[data-section]')].map((s) => ({ id: s.dataset.section, top: s.offsetTop, height: s.offsetHeight })),
       )
       const headerH = await page.evaluate(() => document.querySelector('.app-header').getBoundingClientRect().height)
-      const NAMES = { iconbtn: 'кнопка-иконка', badge: 'бейдж', chip: 'чип' }
+      const NAMES = { iconbtn: 'кнопка-иконка', badge: 'бейдж', chip: 'чип', overlay: 'шторка и диалог: кнопки' }
       const shotSection = async (s, name, file) => {
         await page.setViewportSize({ width: c.width, height: Math.ceil(headerH + s.height + 24) })
         await page.evaluate((top) => (document.querySelector('.app-content').scrollTop = top - 8), s.top)
@@ -1511,6 +1550,208 @@ async function runKitCase(browser, kitUrl, c) {
   }
   await context.close()
   return res
+}
+
+/**
+ * Шторка и диалог на стенде: открываются стеком overlay.ts, закрываются «Назад» Telegram (в режиме Telegram)
+ * или Esc (браузер), фоном, крестиком, жестом вниз; вложенность, двойной тап, фокус, inert, длинная шторка.
+ */
+async function checkOverlays(page, c, expect, res) {
+  const tg = c.mode === 'telegram'
+  const backWay = tg ? 'back' : 'esc'
+  const backName = tg ? '«Назад» Telegram' : 'Esc'
+  const settle = () => page.waitForTimeout(350)
+  const opener = (id) => page.locator(`[data-live-box="overlay"] [data-open="${id}"]`)
+  const readout = page.locator('[data-live="overlay"]')
+  const open = async (id) => {
+    await opener(id).scrollIntoViewIfNeeded()
+    await opener(id).click()
+    await settle()
+  }
+  const back = async () => {
+    if (tg) await page.evaluate(() => window.__check.pressBack())
+    else await page.keyboard.press('Escape')
+    await settle()
+  }
+  const shot = async (name, file) => {
+    await page.screenshot({ path: join(OUT, file) })
+    res.shots.push({ name, file })
+  }
+  /** Открытые слои снизу вверх (закрывающиеся — ещё на экране, но уже не в счёт) */
+  const layers = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('.layer')].filter((l) => !('closing' in l.dataset)).map((l) => (l.classList.contains('layer--dialog') ? 'dialog' : 'sheet')).join(','),
+    )
+  const info = () =>
+    page.evaluate(() => {
+      const open = [...document.querySelectorAll('.layer')].filter((l) => !('closing' in l.dataset))
+      const top = open[open.length - 1]
+      const box = top?.querySelector('[role="dialog"], [role="alertdialog"]')
+      const title = box && document.getElementById(box.getAttribute('aria-labelledby') ?? '')
+      const a = document.activeElement
+      const f = document.querySelector('.app-shell').getBoundingClientRect()
+      const r = box?.getBoundingClientRect()
+      return {
+        role: box?.getAttribute('role') ?? '',
+        modal: box?.getAttribute('aria-modal') === 'true',
+        label: title?.textContent ?? '',
+        focusInside: !!top && top.contains(a),
+        focusOpen: a?.dataset?.open ?? '',
+        focusText: (a?.textContent ?? '').trim(),
+        contentInert: document.querySelector('.app-content').inert,
+        headerInert: document.querySelector('.app-header').inert,
+        lowerInert: open.length > 1 && open.slice(0, -1).every((l) => l.inert),
+        inFrame: !!r && r.left >= f.left - 1 && r.right <= f.right + 1 && r.top >= f.top - 1 && r.bottom <= f.bottom + 1,
+        atBottom: !!r && Math.abs(r.bottom - f.bottom) <= 1,
+        backVisible: window.__check ? window.__check.backVisible() : null,
+      }
+    })
+  const said = async () => (await readout.textContent()) ?? ''
+
+  // Шторка: открыть — фокус внутри, экран под ней недоступен; «Назад» / Esc — закрыть, фокус вернуть
+  await open('menu')
+  let st = await info()
+  expect((await layers()) === 'sheet' && st.role === 'dialog' && st.modal && st.label === 'Намертво', 'шторка: открылась, role="dialog", подпись — заголовок')
+  expect(st.inFrame && st.atBottom, 'шторка: внутри кадра, прижата к низу')
+  expect(st.focusInside, 'шторка: фокус внутри')
+  expect(st.contentInert && st.headerInert, 'шторка: экран под ней недоступен (inert) — ни тапа, ни Tab, ни скринридера')
+  if (tg) expect(st.backVisible === true, 'Telegram: при открытой шторке видна системная «Назад»')
+  if (c.mobile) await shot('шторка', `${c.id}-sheet.png`)
+  await back()
+  st = await info()
+  expect((await layers()) === '' && (await said()).endsWith(`(${backWay})`), `${backName} закрывает шторку`)
+  expect(st.focusOpen === 'menu', 'фокус вернулся на кнопку, открывшую шторку')
+  expect(!st.contentInert && !st.headerInert, 'после закрытия экран снова доступен')
+  if (tg) expect(st.backVisible === false, 'Telegram: «Назад» скрыта, когда слоёв нет')
+
+  // Диалог поверх шторки: «Назад» закрывает сначала диалог, потом шторку
+  await open('menu')
+  await page.locator('.layer [data-open="nested"]').click()
+  await settle()
+  st = await info()
+  expect((await layers()) === 'sheet,dialog' && st.role === 'alertdialog' && st.lowerInert, 'диалог поверх шторки: role="alertdialog", шторка под ним недоступна')
+  expect(st.focusText === 'Отмена', 'диалог: фокус на «Отмена» — лишний Enter ничего не сломает')
+  if (c.mobile) await shot('диалог поверх шторки', `${c.id}-dialog.png`)
+  await back()
+  st = await info()
+  expect((await layers()) === 'sheet' && (await said()) === 'Диалог: не подтвердили', `${backName} закрывает сначала диалог — ответ «нет», шторка остаётся`)
+  expect(st.focusOpen === 'nested', 'фокус вернулся на кнопку, открывшую диалог')
+  await back()
+  expect((await layers()) === '', `второй раз ${backName} закрывает шторку`)
+
+  // Двойной тап по «Отмена» не закрывает шторку под диалогом; крестик закрывает шторку
+  await open('menu')
+  await page.locator('.layer [data-open="nested"]').click()
+  await settle()
+  await page.locator('.layer--dialog .btn--secondary').dblclick()
+  await settle()
+  expect((await layers()) === 'sheet', 'двойной тап по «Отмена» не закрывает шторку под диалогом')
+  await page.locator('.layer--sheet .ui-sheet__head .ui-iconbtn').click()
+  await settle()
+  expect((await layers()) === '' && (await said()).endsWith('(button)'), 'крестик закрывает шторку')
+
+  // Двойной тап по кнопке шторки: закрывающаяся шторка глотает второй тап — действие срабатывает один раз
+  await open('menu')
+  await page.locator('.layer [data-open="to-story"]').dblclick()
+  await settle()
+  expect((await layers()) === '' && (await said()) === '«К истории» сработала: 1', 'двойной тап по кнопке шторки срабатывает один раз')
+
+  // Тап по фону над шторкой
+  await open('menu')
+  const frame = await page.evaluate(() => {
+    const f = document.querySelector('.app-shell').getBoundingClientRect()
+    return { x: f.left + f.width / 2, y: f.top + 30 }
+  })
+  await page.mouse.click(frame.x, frame.y)
+  await settle()
+  expect((await layers()) === '' && (await said()).endsWith('(scrim)'), 'тап по фону закрывает шторку')
+
+  // Жест вниз за шапку: немного — шторка возвращается, дальше четверти — закрывается
+  await open('menu')
+  const grip = await page.evaluate(() => {
+    const r = document.querySelector('.layer .ui-sheet__grip').getBoundingClientRect()
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 }
+  })
+  await page.mouse.move(grip.x, grip.y)
+  await page.mouse.down()
+  await page.mouse.move(grip.x, grip.y + 24, { steps: 4 })
+  await page.mouse.up()
+  await settle()
+  const snapped = await page.evaluate(() => {
+    const sheet = document.querySelector('.layer .ui-sheet')
+    const tf = getComputedStyle(sheet).transform
+    return !sheet.style.getPropertyValue('--ui-sheet-drag') && (tf === 'none' || tf === 'matrix(1, 0, 0, 1, 0, 0)')
+  })
+  expect((await layers()) === 'sheet' && snapped, 'жест: потянули немного — шторка вернулась на место')
+  await page.mouse.move(grip.x, grip.y)
+  await page.mouse.down()
+  await page.mouse.move(grip.x, grip.y + 320, { steps: 10 })
+  await page.mouse.up()
+  await settle()
+  expect((await layers()) === '' && (await said()).endsWith('(swipe)'), 'жест вниз закрывает шторку')
+
+  // Шторка без крестика
+  await open('plain')
+  expect((await page.locator('.layer .ui-sheet .ui-iconbtn').count()) === 0, 'шторка без крестика: крестика нет')
+  await back()
+  expect((await layers()) === '', `шторку без крестика закрывает ${backName}`)
+
+  // Диалог: обещание да / нет
+  await open('dialog')
+  expect((await info()).focusText === 'Отмена', 'диалог: фокус на «Отмена»')
+  await page.locator('.layer--dialog .btn--primary').click()
+  await settle()
+  expect((await layers()) === '' && (await said()) === 'Диалог: подтвердили', 'диалог: действие — «да»')
+  await open('danger')
+  expect((await page.locator('.layer--dialog .btn--danger').count()) === 1, 'опасный диалог: красная кнопка действия')
+  await back()
+  expect((await layers()) === '' && (await said()) === 'Диалог: не подтвердили', `диалог: ${backName} — «нет»`)
+  await open('dialog')
+  await page.mouse.click(frame.x, frame.y)
+  await settle()
+  expect((await layers()) === '' && (await said()) === 'Диалог: не подтвердили', 'диалог: тап по фону — «нет»')
+
+  // Длинная шторка: не выше кадра, шапка на месте, тело прокручивается до последней строки
+  await open('long')
+  const long = await page.evaluate(() => {
+    const f = document.querySelector('.app-shell').getBoundingClientRect()
+    const sheet = document.querySelector('.layer .ui-sheet')
+    const body = sheet.querySelector('.ui-sheet__body')
+    const title = sheet.querySelector('.ui-sheet__title')
+    const s = sheet.getBoundingClientRect()
+    const titleTop = title.getBoundingClientRect().top
+    const scrollable = body.scrollHeight > body.clientHeight + 1
+    body.scrollTop = body.scrollHeight
+    const last = sheet.querySelector('[data-row-n="24"]').getBoundingClientRect()
+    return {
+      fits: s.top >= f.top + 24 - 1 && s.bottom <= f.bottom + 1,
+      scrollable,
+      headStays: Math.abs(title.getBoundingClientRect().top - titleTop) < 1,
+      lastVisible: last.bottom <= body.getBoundingClientRect().bottom + 1,
+    }
+  })
+  expect(long.fits, 'длинная шторка: не выше кадра, сверху остаётся полоска фона')
+  expect(long.scrollable && long.headStays && long.lastVisible, 'длинная шторка: тело прокручивается до конца, шапка на месте')
+  if (c.id === 'kit-320') await shot('длинная шторка', `${c.id}-long.png`)
+  await back()
+
+  // Клавиатура (десктоп): Enter открывает, Tab ходит только внутри шторки, Esc закрывает
+  if (!c.mobile) {
+    await opener('menu').focus()
+    await page.keyboard.press('Enter')
+    await settle()
+    let inside = true
+    for (let i = 0; i < 8; i++) {
+      await page.keyboard.press('Tab')
+      // после последней кнопки фокус уходит в интерфейс браузера (здесь — body) и возвращается в шторку, но не на экран под ней
+      inside &&= await page.evaluate(() => document.activeElement === document.body || !!document.activeElement?.closest('.layer:not([data-closing])'))
+    }
+    expect((await layers()) === 'sheet' && inside, 'клавиатура: Enter открывает шторку, Tab не уходит на экран под ней')
+    await page.keyboard.press('Escape')
+    await settle()
+    st = await info()
+    expect((await layers()) === '' && st.focusOpen === 'menu', 'клавиатура: Esc закрывает, фокус — обратно на кнопку')
+  }
 }
 
 /** Цвет из computed-строки или hex — в «r,g,b» для сравнения */
