@@ -15,6 +15,7 @@
  */
 
 import { createServer, preview } from 'vite'
+import { checkStatsUi } from './check-stats-ui.mjs'
 import { chromium } from 'playwright-core'
 import { gzipSync } from 'node:zlib'
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -1173,6 +1174,9 @@ async function main() {
     for (const e of r.errors) console.log(`    ✗ ${e}`)
   }
   try {
+    if (selected('stats')) {
+      try { await checkStatsUi(browser, OUT) } catch (error) { global.errors.push(`stats: ${error.stack}`) }
+    }
     for (const vp of VIEWPORTS) {
       for (const mode of MODES) {
         if (!selected(`${vp.id}-${mode}`)) continue

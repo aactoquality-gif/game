@@ -3,13 +3,13 @@
  *
  *   GET  /*                 — статика из dist/ (вместо nginx)
  *   POST /api/events        — приём аналитических событий пачками
- *   GET  /api/stats         — отчёт по гипотезам Г1 (нужен ?key=STATS_KEY)
- *   GET  /api/events.jsonl  — сырые события (нужен ?key=STATS_KEY)
+ *   GET  /api/stats         — отчёт по гипотезам Г1 (admin cookie)
+ *   GET  /api/stats/download — сырые события (admin cookie)
  *   GET  /api/health        — проверка, что сервер жив
  *
  * Переменные окружения:
  *   BOT_TOKEN  — токен бота; включает проверку подписи initData
- *   STATS_KEY  — пароль к отчёту; без него отчёт выключен
+ *   STATS_*   — настройки беспарольного входа, см. docs/stats-auth.md
  *   DATA_DIR   — куда писать events.jsonl (на Amvera — постоянный диск /data)
  *   PORT       — порт (по умолчанию 80)
  *
@@ -24,13 +24,13 @@ import { createReadStream, existsSync, mkdirSync, appendFileSync, statSync } fro
 import { fileURLToPath } from 'node:url'
 import { dirname, join, extname, resolve, sep } from 'node:path'
 import { createHmac, timingSafeEqual } from 'node:crypto'
+import { createStatsAuth, createClientIp } from './stats-auth.mjs'
 import { loadEvents, loadChapter, buildReport, renderHtml } from './stats.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
 const PORT = Number(process.env.PORT) || 80
 const BOT_TOKEN = process.env.BOT_TOKEN || ''
-const STATS_KEY = process.env.STATS_KEY || ''
 const DIST_DIR = resolve(__dirname, '..', 'dist')
 const DATA_DIR = resolve(process.env.DATA_DIR || join(__dirname, '..', 'data'))
 const EVENTS_FILE = join(DATA_DIR, 'events.jsonl')
@@ -50,6 +50,8 @@ const RATE_LIMIT_PER_MIN = 120
 // ---------------------------------------------------------------------------
 
 mkdirSync(DATA_DIR, { recursive: true })
+const statsAuth = createStatsAuth({ dataDir: DATA_DIR })
+const resolveClientIp = createClientIp(process.env.TRUSTED_PROXY_CIDRS)
 
 /** @type {Record<string, string>} */
 const MIME = {
@@ -85,8 +87,7 @@ function sendJson(res, status, obj, extraHeaders = {}) {
 }
 
 function clientIp(req) {
-  const fwd = req.headers['x-forwarded-for']
-  return (typeof fwd === 'string' && fwd.split(',')[0].trim()) || req.socket.remoteAddress || 'unknown'
+  return resolveClientIp(req)
 }
 
 // ---------------------------------------------------------------------------
@@ -259,21 +260,7 @@ async function handleEvents(req, res) {
   sendJson(res, 200, { ok: true, accepted: lines.length })
 }
 
-function checkStatsKey(url, res) {
-  if (!STATS_KEY) {
-    sendJson(res, 404, { error: 'stats disabled: set STATS_KEY' })
-    return false
-  }
-  if (!safeEqual(url.searchParams.get('key') ?? '', STATS_KEY)) {
-    sendJson(res, 401, { error: 'wrong key' })
-    return false
-  }
-  return true
-}
-
 function handleStats(url, res) {
-  if (!checkStatsKey(url, res)) return
-
   const episode = Number(url.searchParams.get('episode')) || 1
   const storyParam = url.searchParams.get('story') ?? ''
   const story = /^[a-z0-9_-]{1,40}$/.test(storyParam) ? storyParam : 'namertvo'
@@ -298,11 +285,10 @@ function handleStats(url, res) {
     'Referrer-Policy': 'no-referrer',
     'X-Robots-Tag': 'noindex',
   })
-  res.end(renderHtml(report, { verifyOn: !!BOT_TOKEN, dataDir: DATA_DIR, key: STATS_KEY, from: fromStr, exclude: excludeStr }))
+  res.end(renderHtml(report, { verifyOn: !!BOT_TOKEN, dataDir: DATA_DIR, from: fromStr, exclude: excludeStr }))
 }
 
 function handleRawEvents(url, res) {
-  if (!checkStatsKey(url, res)) return
   res.writeHead(200, {
     'Content-Type': 'application/x-ndjson; charset=utf-8',
     'Content-Disposition': 'attachment; filename="events.jsonl"',
@@ -375,8 +361,33 @@ const server = createServer(async (req, res) => {
   try {
     if (pathname === '/api/events' && req.method === 'POST') return await handleEvents(req, res)
     if (pathname === '/api/health' && req.method === 'GET') return sendJson(res, 200, { ok: true, version: VERSION })
-    if (pathname === '/api/stats' && req.method === 'GET') return handleStats(url, res)
-    if (pathname === '/api/events.jsonl' && req.method === 'GET') return handleRawEvents(url, res)
+    if (pathname.startsWith('/api/stats/auth/') && req.method === 'POST') {
+      const action = pathname.slice('/api/stats/auth/'.length)
+      if (!['telegram', 'email/request', 'email/verify'].includes(action)) return sendJson(res, 404, { error: 'not found' })
+      let body
+      try { body = await readBody(req) } catch (err) {
+        return sendJson(res, err.message === 'Body too large' ? 413 : 400, { error: 'invalid request' })
+      }
+      return await statsAuth.handle(req, res, action, body, clientIp(req))
+    }
+    if (['/api/stats', '/api/stats/download', '/api/events.jsonl'].includes(pathname) && req.method === 'GET') {
+      // Strip legacy secrets before rendering anything; never copy unknown query parameters.
+      if (url.searchParams.has('key')) {
+        const clean = new URLSearchParams()
+        for (const name of ['story', 'episode', 'from', 'exclude', 'format']) {
+          if (url.searchParams.has(name)) clean.set(name, url.searchParams.get(name))
+        }
+        res.writeHead(303, { Location: pathname + (clean.size ? `?${clean}` : ''), 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' })
+        return res.end()
+      }
+      const html = pathname === '/api/stats' && url.searchParams.get('format') !== 'json'
+      if (!statsAuth.authorize(req, res, html ? () => {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex' })
+        createReadStream(join(DIST_DIR, 'stats-login.html')).on('error', () => res.destroy()).pipe(res)
+      } : undefined)) return
+      if (pathname === '/api/stats') return handleStats(url, res)
+      return handleRawEvents(url, res)
+    }
     if (pathname.startsWith('/api/')) return sendJson(res, 404, { error: 'not found' })
 
     if (req.method !== 'GET' && req.method !== 'HEAD') {
@@ -394,5 +405,5 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`Game server ${VERSION} on :${PORT}  dist=${DIST_DIR}  data=${DATA_DIR}`)
   if (!BOT_TOKEN) console.warn('  ⚠ BOT_TOKEN не задан — подпись initData не проверяется')
-  if (!STATS_KEY) console.warn('  ⚠ STATS_KEY не задан — /api/stats выключен')
+  if (!statsAuth.enabled) console.warn('  ⚠ Stats authentication unavailable: configure STATS_SESSION_SECRET and STATS_ORIGIN')
 })
