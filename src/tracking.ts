@@ -54,6 +54,7 @@ export const UI_TARGETS = [
   'pause.toStory',
   'pause.restart', // открыть диалог «Начать сначала?»
   'pause.textSize', // value — s / m / l
+  'pause.music', // фоновая музыка; value — on / off (каким стал переключатель)
   'pause.close', // закрыть меню паузы; value — button (крестик) / back / esc / scrim (фон) / swipe (жест вниз)
   // Карточка конца эпизода
   'end.readNext', // value — номер следующего эпизода

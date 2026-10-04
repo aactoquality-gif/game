@@ -91,6 +91,7 @@ export const ru = {
   'reading.textSizeS': 'Мельче',
   'reading.textSizeM': 'Обычный',
   'reading.textSizeL': 'Крупнее',
+  'reading.music': 'Музыка',
   'reading.choiceGroup': 'Выбор',
   'reading.pushSender': 'Уведомление',
   'reading.pushTime': 'сейчас',

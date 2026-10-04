@@ -10,10 +10,14 @@ import { initAnalytics } from './analytics'
 import { nav, app, renderLoading, renderError } from './app'
 import { renderScene, applyTextSize } from './ui/reading'
 import { startSync } from './sync'
+import { initBackgroundMusic } from './audio'
 import { t } from './i18n'
 
 async function main(): Promise<void> {
   initTelegram()
+
+  // Музыка — только слушатели жестов: трек грузится после первого касания, первый экран его не ждёт
+  initBackgroundMusic()
 
   // Аналитика — до движка: движок шлёт первые события уже при открытии эпизода
   initAnalytics({
