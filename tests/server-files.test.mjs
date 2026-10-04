@@ -13,6 +13,8 @@ import { join, resolve } from 'node:path'
 import { once } from 'node:events'
 
 const BIG = 'x'.repeat(3 * 1024 * 1024)
+/** «Трек»: у каждого байта своё место — по телу видно, какой кусок пришёл */
+const TRACK = 'abcdefghijklmnopqrstuvwxyz0123456789'.repeat(1000)
 
 let dir
 let child
@@ -30,9 +32,9 @@ async function freePort() {
 }
 
 /** Запрос к тестовому серверу, тело ответа собирается целиком */
-function get(path, method = 'GET') {
+function get(path, method = 'GET', headers = {}) {
   return new Promise((done, fail) => {
-    const req = request({ hostname: '127.0.0.1', port, path, method }, (res) => {
+    const req = request({ hostname: '127.0.0.1', port, path, method, headers }, (res) => {
       const chunks = []
       res.on('data', (c) => chunks.push(c))
       res.on('end', () => done({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString() }))
@@ -54,6 +56,7 @@ before(async () => {
   writeFileSync(join(dir, 'dist', 'ok.json'), '{"ok":true}')
   writeFileSync(join(dir, 'dist', 'empty.json'), '')
   writeFileSync(join(dir, 'dist', 'assets', 'big.js'), BIG)
+  writeFileSync(join(dir, 'dist', 'assets', 'track.mp3'), TRACK)
 
   port = await freePort()
   child = spawn(process.execPath, [join(dir, 'server', 'index.mjs')], {
@@ -123,4 +126,67 @@ test('файл не читается — 500, процесс жив', async () =
   const health = await get('/api/health')
   assert.equal(health.status, 200)
   assert.equal(JSON.parse(health.body).ok, true)
+})
+
+// Музыка: iOS (Safari и WebView Telegram) играет медиа только с сервера, который понимает Range и отдаёт тип звука
+
+test('mp3 без Range — целиком, тип audio/mpeg, сервер объявляет Range', async () => {
+  const r = await get('/assets/track.mp3')
+  assert.equal(r.status, 200)
+  assert.equal(r.body, TRACK)
+  assert.equal(r.headers['content-type'], 'audio/mpeg')
+  assert.equal(r.headers['accept-ranges'], 'bytes')
+  assert.equal(r.headers['content-length'], String(TRACK.length))
+  assert.match(r.headers['cache-control'], /immutable/)
+})
+
+test('mp3: Range bytes=0- — 206 и весь файл (так начинает Safari)', async () => {
+  const r = await get('/assets/track.mp3', 'GET', { Range: 'bytes=0-' })
+  assert.equal(r.status, 206)
+  assert.equal(r.body, TRACK)
+  assert.equal(r.headers['content-range'], `bytes 0-${TRACK.length - 1}/${TRACK.length}`)
+})
+
+test('mp3: Range bytes=0-1 — проба Safari, ровно два байта', async () => {
+  const r = await get('/assets/track.mp3', 'GET', { Range: 'bytes=0-1' })
+  assert.equal(r.status, 206)
+  assert.equal(r.body, 'ab')
+  assert.equal(r.headers['content-length'], '2')
+})
+
+test('mp3: кусок из середины и хвост', async () => {
+  const mid = await get('/assets/track.mp3', 'GET', { Range: 'bytes=100-109' })
+  assert.equal(mid.status, 206)
+  assert.equal(mid.body, TRACK.slice(100, 110))
+  assert.equal(mid.headers['content-range'], `bytes 100-109/${TRACK.length}`)
+  const tail = await get('/assets/track.mp3', 'GET', { Range: 'bytes=-5' })
+  assert.equal(tail.status, 206)
+  assert.equal(tail.body, TRACK.slice(-5))
+  const over = await get('/assets/track.mp3', 'GET', { Range: `bytes=${TRACK.length - 3}-${TRACK.length + 100}` })
+  assert.equal(over.status, 206, 'конец за файлом — обрезается по файлу')
+  assert.equal(over.body, TRACK.slice(-3))
+})
+
+test('mp3: диапазон за файлом — 416, процесс жив', async () => {
+  const r = await get('/assets/track.mp3', 'GET', { Range: `bytes=${TRACK.length}-` })
+  assert.equal(r.status, 416)
+  assert.equal(r.headers['content-range'], `bytes */${TRACK.length}`)
+  assert.equal(child.exitCode, null, `процесс завершился:\n${output}`)
+})
+
+test('mp3: непонятный Range — файл целиком; HEAD с Range — только заголовки', async () => {
+  const multi = await get('/assets/track.mp3', 'GET', { Range: 'bytes=0-1,5-6' })
+  assert.equal(multi.status, 200)
+  assert.equal(multi.body, TRACK)
+  const head = await get('/assets/track.mp3', 'HEAD', { Range: 'bytes=0-1' })
+  assert.equal(head.status, 206)
+  assert.equal(head.body, '')
+  assert.equal(head.headers['content-length'], '2')
+})
+
+test('Range у не-медиа не меняет ответ', async () => {
+  const r = await get('/ok.json', 'GET', { Range: 'bytes=0-1' })
+  assert.equal(r.status, 200)
+  assert.equal(r.body, '{"ok":true}')
+  assert.equal(r.headers['accept-ranges'], undefined)
 })

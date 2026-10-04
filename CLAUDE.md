@@ -159,6 +159,7 @@
 - Vanilla TypeScript (strict) + Vite 6. Без React и UI-фреймворков. Runtime-зависимостей нет — так и держать.
 - Сервер `server/index.mjs` — Node без npm-зависимостей: статика, `POST /api/events`, `GET /api/stats` (отчёт Г1 — `server/stats.mjs`;
   вход в статистику — `server/stats-auth.mjs`: Telegram или код на email, `docs/stats-auth.md`).
+  Медиа (`.mp3`, `.m4a`, `.ogg`) статика отдаёт с типом звука и Range (206 / 416): без этого iOS не играет звук.
 - Деплой: `Dockerfile` (сборка на node:22-alpine → Node-сервер), `amvera.yaml`, постоянный диск `/data`. Секреты —
   `BOT_TOKEN` (подпись initData), `STATS_SESSION_SECRET`, `RESEND_API_KEY`; списки доступа к статистике — `STATS_ADMIN_TELEGRAM_IDS`,
   `STATS_ADMIN_EMAILS` (полный список переменных — `docs/stats-auth.md`) — только в переменных Amvera, не в репозитории и не в логах.
@@ -188,6 +189,11 @@
   и системная «Назад» (одна страховочная запись в `history`, пока есть куда возвращаться).
 - `src/engine.ts` — главы, прогресс, выборы, счётчики. `src/types.ts` — типы главы и каталога.
 - `src/storage.ts` — сохранение: сразу `localStorage`, в фоне CloudStorage, при запуске — свежая копия по `savedAt`.
+  Отдельно — настройка устройства «музыка вкл / выкл» (`game_music_enabled`, только `localStorage`, формат `game_state` не трогает).
+- `src/audio.ts` — фоновая музыка: `initBackgroundMusic()` в `main.ts` вешает только слушатели жестов, трек
+  (`src/assets/background.mp3`, хешированный ассет) создаётся и грузится при первом жесте — первый экран его не ждёт;
+  пауза при скрытой вкладке. Громкость вшита в файл (−12 дБ): на iOS `audio.volume` не работает. Переключатель
+  «Музыка» — в меню паузы (`pause.music`). Новый трек — заменить файл, громкость выровнять так же.
 - `src/telegram.ts` — единственная точка доступа к Telegram WebApp. `tg === null` вне Telegram (признак — пустой `initData`).
   `getPlatform()` — telegram / browser, клиент, десктоп ли.
 - `src/store.ts` — состояние приложения: `platform`, `config`, `wallet`, `inbox`, `ui.route`.

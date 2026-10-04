@@ -40,6 +40,28 @@ export function emptyProgress(episode = 1): StoryProgress {
   }
 }
 
+/**
+ * Фоновая музыка вкл / выкл — настройка устройства, отдельно от game_state: формат сохранения
+ * не меняется, в облако не уходит. Нет записи или хранилище недоступно — музыка включена.
+ */
+const MUSIC_KEY = 'game_music_enabled'
+
+export function loadMusicEnabled(): boolean {
+  try {
+    return localStorage.getItem(MUSIC_KEY) !== 'false'
+  } catch {
+    return true
+  }
+}
+
+export function saveMusicEnabled(enabled: boolean): void {
+  try {
+    localStorage.setItem(MUSIC_KEY, String(enabled))
+  } catch {
+    // localStorage может быть недоступен — настройка проживёт до закрытия игры
+  }
+}
+
 /** Сохранить прогресс */
 export function saveProgress(save: SaveData): void {
   const data = JSON.stringify({ ...save, savedAt: Date.now() })

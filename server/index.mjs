@@ -69,7 +69,13 @@ const MIME = {
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
   '.ttf': 'font/ttf',
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.ogg': 'audio/ogg',
 }
+
+/** Медиа отдаётся с поддержкой Range: iOS (Safari и WebView Telegram) без неё звук не играет */
+const MEDIA = new Set(['.mp3', '.m4a', '.ogg'])
 
 // ---------------------------------------------------------------------------
 // Утилиты
@@ -318,10 +324,11 @@ function handleRawEvents(url, res) {
  * (файл пропал, нет прав, на месте файла каталог) до начала ответа — 500, а не падение процесса;
  * ошибка посреди ответа — обрыв соединения. Клиент ушёл — поток закрывается.
  */
-function sendFile(res, filePath, headers) {
-  const stream = createReadStream(filePath)
+function sendFile(res, filePath, headers, range) {
+  const stream = createReadStream(filePath, range ? { start: range.start, end: range.end } : undefined)
+  const status = range ? 206 : 200
   const begin = () => {
-    if (!res.headersSent) res.writeHead(200, headers)
+    if (!res.headersSent) res.writeHead(status, headers)
   }
   stream.on('data', (chunk) => {
     begin()
@@ -384,11 +391,54 @@ function serveStatic(req, res, pathname) {
     'Cache-Control': isHashed ? 'public, max-age=31536000, immutable' : 'no-cache',
     'X-Content-Type-Options': 'nosniff',
   }
+
+  let range
+  if (MEDIA.has(ext)) {
+    headers['Accept-Ranges'] = 'bytes'
+    let size = -1
+    try {
+      size = statSync(filePath).size
+    } catch { /* ошибку чтения покажет sendFile — 500 */ }
+    if (size >= 0) {
+      range = parseRange(req.headers.range, size)
+      if (range === null) {
+        res.writeHead(416, { 'Content-Range': `bytes */${size}`, 'Cache-Control': 'no-store' })
+        return res.end()
+      }
+      if (range) headers['Content-Range'] = `bytes ${range.start}-${range.end}/${size}`
+      headers['Content-Length'] = String(range ? range.end - range.start + 1 : size)
+    }
+  }
+
   if (req.method === 'HEAD') {
-    res.writeHead(200, headers)
+    res.writeHead(range ? 206 : 200, headers)
     return res.end()
   }
-  sendFile(res, filePath, headers)
+  sendFile(res, filePath, headers, range)
+}
+
+/**
+ * Один диапазон из заголовка Range (RFC 9110): { start, end } включительно.
+ * undefined — отдать файл целиком (заголовка нет, несколько диапазонов или не bytes — так можно по стандарту);
+ * null — диапазон за пределами файла (416).
+ */
+function parseRange(header, size) {
+  if (typeof header !== 'string') return undefined
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim())
+  if (!m || (m[1] === '' && m[2] === '')) return undefined
+  let start
+  let end
+  if (m[1] === '') {
+    const suffix = Number(m[2])
+    if (suffix === 0) return null
+    start = Math.max(0, size - suffix)
+    end = size - 1
+  } else {
+    start = Number(m[1])
+    end = m[2] === '' ? size - 1 : Math.min(Number(m[2]), size - 1)
+  }
+  if (start >= size || start > end) return null
+  return { start, end }
 }
 
 // ---------------------------------------------------------------------------

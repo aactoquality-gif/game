@@ -341,6 +341,9 @@ async function openCase(browser, vp, mode, { id, label = '', full = false, allow
     // sendBeacon при перезагрузке страница «отменяет», но браузер его доставляет —
     // доставку проверяет блок аналитики по тому, что принял сервер
     if (new URL(r.url()).pathname.startsWith('/api/') && r.failure()?.errorText === 'net::ERR_ABORTED') return
+    // Медиа (фоновая музыка) браузер читает кусками и обрывает запрос, когда буфер полон или страница
+    // перезагружается, — это не сбой. Трек, которого нет или который сервер не отдал, ловит обработчик response
+    if (r.resourceType() === 'media' && r.failure()?.errorText === 'net::ERR_ABORTED') return
     if (allowFailed.some((part) => r.url().includes(part))) return
     fail(`запрос не прошёл: ${r.url()} (${r.failure()?.errorText})`)
   })
@@ -958,11 +961,36 @@ async function runRegression(browser, baseUrl, apiLog, vpId, mode) {
     await page.keyboard.press(key)
     await page.waitForTimeout(TAP_GUARD_MS + 80)
   }
+  // Фоновая музыка (src/audio.ts): запросы трека и журнал play() / pause() у медиа-элементов
+  const trackRequests = []
+  page.on('request', (r) => {
+    if (/\.mp3(\?|$)/.test(new URL(r.url()).pathname)) trackRequests.push(r.url())
+  })
+  await page.addInitScript(() => {
+    const log = []
+    window.__musicLog = log
+    const play = HTMLMediaElement.prototype.play
+    const pause = HTMLMediaElement.prototype.pause
+    HTMLMediaElement.prototype.play = function () {
+      const p = play.call(this)
+      p.then(
+        () => log.push('playing'),
+        (e) => log.push(`blocked:${e?.name}`),
+      )
+      return p
+    }
+    HTMLMediaElement.prototype.pause = function () {
+      log.push('pause')
+      return pause.call(this)
+    }
+  })
+  const musicLog = () => page.evaluate(() => [...(window.__musicLog ?? [])])
   try {
     await page.goto(`${baseUrl}?debug`)
     let s = await waitForScreen(page, (x) => ['text', 'push', 'choice'].includes(x.screen), 'первый экран')
     const firstText = s.text
     await page.waitForTimeout(TAP_GUARD_MS + 100)
+    expect(trackRequests.length === 0 && (await musicLog()).length === 0, 'музыка: до первого жеста трек не грузится и не играет (первый экран не ждёт сеть)')
 
     // 1. Клавиатура (Telegram Desktop, браузер): Enter листает, цифра выбирает
     for (let i = 0; i < 80 && s.screen !== 'choice'; i++) {
@@ -970,6 +998,8 @@ async function runRegression(browser, baseUrl, apiLog, vpId, mode) {
       s = await state()
     }
     expect(s.screen === 'choice', 'клавиатура: Enter листает до выбора')
+    expect(trackRequests.length > 0, 'музыка: после первого жеста трек начинает грузиться')
+    expect((await musicLog()).includes('playing'), `музыка: после первого жеста трек играет (журнал: ${(await musicLog()).join(', ') || 'пусто'})`)
     const beforeKey = s.text
     await press('1')
     await page.waitForTimeout(250)
@@ -987,6 +1017,22 @@ async function runRegression(browser, baseUrl, apiLog, vpId, mode) {
     const afterArrow = await page.evaluate(() => document.activeElement?.dataset.value)
     expect((await textSize()) === 'm' && afterArrow === 'm', 'пауза: стрелка ← выбирает «Обычный» и переводит на него фокус')
     expect((await page.locator('.layer').count()) === 1, 'пауза: стрелки не листают эпизод под шторкой')
+    // «Музыка» — переключатель kit: выключить → пауза трека и запись game_music_enabled; включить → снова играет
+    const music = page.locator('.layer .ui-switch[data-track="pause.music"]')
+    const musicStored = () => page.evaluate(() => localStorage.getItem('game_music_enabled'))
+    expect((await music.getAttribute('role')) === 'switch' && (await music.getAttribute('aria-checked')) === 'true', 'пауза: «Музыка» — переключатель, по умолчанию включён')
+    await music.click()
+    await page.waitForTimeout(150)
+    expect(
+      (await music.getAttribute('aria-checked')) === 'false' && (await musicStored()) === 'false' && (await musicLog()).at(-1) === 'pause',
+      'пауза: «Музыка» выключается — трек на паузе, настройка запомнена (game_music_enabled = false)',
+    )
+    await music.click()
+    await page.waitForTimeout(150)
+    expect(
+      (await music.getAttribute('aria-checked')) === 'true' && (await musicStored()) === 'true' && (await musicLog()).at(-1) === 'playing',
+      'пауза: «Музыка» включается — трек снова играет, настройка запомнена',
+    )
     await page.locator('[data-track="pause.restart"]').click()
     await page.locator('.layer--dialog').waitFor()
     await page.waitForTimeout(250)
@@ -1053,7 +1099,7 @@ async function runRegression(browser, baseUrl, apiLog, vpId, mode) {
     const events = apiLog.filter((p) => p.caseId === id).flatMap((p) => p.events ?? [])
     const taps = events.filter((e) => e.event === 'ui_tap').map((e) => `${e.data?.target}${e.data?.value !== undefined ? `:${e.data.value}` : ''}`)
     const dismissWay = mode === 'telegram' ? 'back' : 'esc'
-    for (const need of ['pause.textSize:l', 'pause.textSize:m', 'pause.restart', `dialog.restart:${dismissWay}`, 'dialog.restart:cancel', 'dialog.restart:confirm', 'end.toStory', 'story.episodeReread:1', 'dialog.reread:cancel']) {
+    for (const need of ['pause.textSize:l', 'pause.textSize:m', 'pause.music:off', 'pause.music:on', 'pause.restart',`dialog.restart:${dismissWay}`, 'dialog.restart:cancel', 'dialog.restart:confirm', 'end.toStory', 'story.episodeReread:1', 'dialog.reread:cancel']) {
       expect(taps.includes(need), `аналитика: ${need}`)
     }
     expect(taps.some((x) => x.startsWith('menu.folderSoon:')), 'аналитика: menu.folderSoon с историей')

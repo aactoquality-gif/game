@@ -27,6 +27,8 @@ import { openSheet, confirmDialog, closeTopOverlay, hasOverlay } from './overlay
 import { t } from '../i18n'
 import { segmented } from './kit/segmented'
 import { iconButton } from './kit/icon-button'
+import { switchRow } from './kit/switch'
+import { isMusicEnabled, setMusicEnabled } from '../audio'
 
 /** Защита от двойного тапа: сразу после смены экрана тапы игнорируются, мс */
 const TAP_GUARD_MS = 350
@@ -125,9 +127,16 @@ function openPauseMenu(nav: Nav): void {
           }),
       },
     ],
-    extra: textSizeControl(),
+    extra: h('div', {}, [textSizeControl(), musicControl()]),
     tap: 'pause.close',
   })
+}
+
+/** Фоновая музыка — переключатель из src/ui/kit; состояние — src/audio.ts */
+function musicControl(): HTMLElement {
+  return h('div', { class: 'sheet__extra' }, [
+    switchRow({ label: t('reading.music'), checked: isMusicEnabled(), onChange: setMusicEnabled, tap: 'pause.music' }),
+  ])
 }
 
 /** Размер текста — сегменты из src/ui/kit: стрелки клавиатуры, в порядке Tab — только выбранный */
