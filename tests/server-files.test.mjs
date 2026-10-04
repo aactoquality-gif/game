@@ -19,6 +19,7 @@ let child
 let port
 let output = ''
 
+/** Занять и тут же освободить порт — чтобы запустить сервер на свободном порту */
 async function freePort() {
   const srv = createServer()
   srv.listen(0, '127.0.0.1')
@@ -28,6 +29,7 @@ async function freePort() {
   return p
 }
 
+/** Запрос к тестовому серверу, тело ответа собирается целиком */
 function get(path, method = 'GET') {
   return new Promise((done, fail) => {
     const req = request({ hostname: '127.0.0.1', port, path, method }, (res) => {
