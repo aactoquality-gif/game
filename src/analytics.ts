@@ -119,7 +119,7 @@ export function track(event: EventName, data?: Record<string, unknown>): void {
     ...(data ? { data } : {}),
   })
 
-  if (buffer.length > MAX_BUFFER) buffer = buffer.slice(-MAX_BUFFER)
+  if (buffer.length > MAX_BUFFER) buffer = buffer.slice(0, MAX_BUFFER)
 }
 
 /** Сбросить счётчик экранов (вызывается при рестарте эпизода) */
@@ -166,8 +166,10 @@ function flush(useBeacon: boolean): void {
   post(events).then((delivered) => {
     sending = false
     if (!delivered) {
-      // Сеть или сервер недоступны — пачка возвращается в начало очереди, повтор — по таймеру
-      buffer = [...events, ...buffer].slice(-MAX_BUFFER)
+      // Сеть или сервер недоступны — пачка возвращается в начало очереди, повтор — по таймеру.
+      // At-least-once: при повторе сервер может получить пачку дважды; дедупликация — в отчёте Г1
+      // (server/stats.mjs группирует по session + ts + event).
+      buffer = [...events, ...buffer].slice(0, MAX_BUFFER)
       return
     }
     if (buffer.length > 0) flush(false)

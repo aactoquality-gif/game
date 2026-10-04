@@ -383,6 +383,12 @@ function serveStatic(req, res, pathname) {
     'X-Content-Type-Options': 'nosniff',
   }
   if (req.method === 'HEAD') {
+    try {
+      statSync(filePath)
+    } catch {
+      res.writeHead(500)
+      return res.end()
+    }
     res.writeHead(200, headers)
     return res.end()
   }
