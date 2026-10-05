@@ -78,6 +78,8 @@ function element(): HTMLAudioElement {
   el.volume = gain
   // Файл не загрузился (нет сети, обрыв) — следующий жест создаст элемент заново
   el.addEventListener('error', () => {
+    // Диагностика: без этого сбой загрузки трека был бы невидим (код 4 = формат/ответ сервера не подошёл, 2 = сеть)
+    console.warn('[music] трек не загрузился', { url: el.currentSrc || source, code: el.error?.code, message: el.error?.message })
     if (audio !== el) return
     audio = null
     started = false
@@ -97,8 +99,10 @@ function play(): void {
         started = true
         stopListening()
       },
-      () => {
-        // Жест не засчитан (Esc, ещё нет активации) — ждём следующего
+      (err: unknown) => {
+        // Жест не засчитан (Esc, ещё нет активации) — ждём следующего. Причину пишем в консоль: раньше она терялась
+        const e = err as { name?: string; message?: string } | null
+        console.warn('[music] play() отклонён:', e?.name, e?.message)
       },
     )
 }
