@@ -26,6 +26,10 @@ const OLD_LINES = [
 ]
 /** Оборванная запись (падение посреди дозаписи): JSON не читается, но имя внутри есть */
 const BROKEN_LINE = '{"event":"screen_view","ts":4,"user_id":1003,"user_name":"Битое Имя","verif'
+/** Валидный JSON, но не запись: раньше на таких строках перезапись падала */
+const NOT_EVENTS = ['null', '[1,2]']
+/** Копия журнала от прерванной перезаписи — с именем внутри */
+const STALE_TMP = 'events.jsonl.tmp-99999'
 
 let dir
 let child
@@ -91,7 +95,8 @@ before(async () => {
   mkdirSync(join(dir, 'dist'), { recursive: true })
   writeFileSync(join(dir, 'dist', 'index.html'), '<!doctype html>')
   mkdirSync(join(dir, 'data'))
-  writeFileSync(join(dir, 'data', 'events.jsonl'), [JSON.stringify(OLD_LINES[0]), BROKEN_LINE, ...OLD_LINES.slice(1).map((l) => JSON.stringify(l))].join('\n') + '\n')
+  writeFileSync(join(dir, 'data', 'events.jsonl'), [JSON.stringify(OLD_LINES[0]), BROKEN_LINE, ...NOT_EVENTS, ...OLD_LINES.slice(1).map((l) => JSON.stringify(l))].join('\n') + '\n')
+  writeFileSync(join(dir, 'data', STALE_TMP), JSON.stringify(OLD_LINES[0]) + '\n')
   port = await freePort()
   child = spawn(process.execPath, [join(dir, 'server', 'index.mjs')], {
     env: { ...process.env, PORT: String(port), DATA_DIR: join(dir, 'data'), BOT_TOKEN },
@@ -129,7 +134,12 @@ test('старые записи: имена вычищены при запуск
   const raw = readFileSync(eventsFile(), 'utf8')
   assert.ok(!raw.includes('Старое Имя'))
   assert.ok(!raw.includes('Битое Имя'))
-  assert.match(output, /\[privacy\] из старых событий убраны имена: 3/)
+  assert.match(output, /\[privacy\] из старых событий убраны имена и битые строки: 5/)
+})
+
+test('незавершённая копия журнала после падения удалена при запуске', () => {
+  assert.ok(!existsSync(join(dir, 'data', STALE_TMP)), 'копия журнала осталась')
+  assert.match(output, /\[privacy\] удалены незавершённые копии журнала: 1/)
 })
 
 test('подписанный initData: в событии только ID, без имени и username', async () => {

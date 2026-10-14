@@ -29,7 +29,7 @@ import { dirname, join, extname, resolve, sep } from 'node:path'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { createStatsAuth, createClientIp } from './stats-auth.mjs'
 import { loadEvents, loadChapter, buildReport, renderHtml } from './stats.mjs'
-import { stripStoredNames } from './events-store.mjs'
+import { stripStoredNames, removeStaleTemps } from './events-store.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -55,10 +55,17 @@ const RATE_LIMIT_PER_MIN = 120
 
 mkdirSync(DATA_DIR, { recursive: true })
 
-// Имена игроков из записей до 14.10.2026 — вычистить при запуске; файл без имён не перезаписывается
+// Незавершённые копии журнала после падения — удалить; имена игроков из записей до 14.10.2026 — вычистить.
+// Файл без имён не перезаписывается
+try {
+  const stale = removeStaleTemps(EVENTS_FILE)
+  if (stale) console.log(`[privacy] удалены незавершённые копии журнала: ${stale}`)
+} catch (err) {
+  console.error(`[privacy] не удалось удалить копии журнала: ${err.code || err.message}`)
+}
 try {
   const cleaned = stripStoredNames(EVENTS_FILE)
-  if (cleaned) console.log(`[privacy] из старых событий убраны имена: ${cleaned}`)
+  if (cleaned) console.log(`[privacy] из старых событий убраны имена и битые строки: ${cleaned}`)
 } catch (err) {
   console.error(`[privacy] не удалось убрать имена из ${EVENTS_FILE}: ${err.code || err.message}`)
 }

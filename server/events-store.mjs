@@ -7,7 +7,11 @@
  * пропускает (loadEvents в server/stats.mjs), а внутри может остаться имя или ID того, кто просил удалить данные.
  */
 
-import { readFileSync, openSync, writeFileSync, fsyncSync, closeSync, renameSync, unlinkSync } from 'node:fs'
+import { readFileSync, readdirSync, openSync, writeFileSync, fsyncSync, closeSync, renameSync, unlinkSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
+
+/** Временная копия при перезаписи: events.jsonl.tmp-<pid> */
+const TMP_SUFFIX = '.tmp-'
 
 /** Прочитать файл; нет файла — пустая строка */
 function readOrEmpty(file) {
@@ -40,6 +44,11 @@ export function rewriteEvents(file, map) {
       broken++
       continue
     }
+    // Валидный JSON, но не запись события (null, число, массив) — тоже битая строка, иначе map упадёт
+    if (event === null || typeof event !== 'object' || Array.isArray(event)) {
+      broken++
+      continue
+    }
     const next = map(event)
     if (next === null) {
       removed++
@@ -51,18 +60,21 @@ export function rewriteEvents(file, map) {
   }
   if (removed === 0 && changed === 0 && broken === 0) return { kept: out.length, removed, changed, broken }
 
-  const tmp = `${file}.tmp-${process.pid}`
-  const fd = openSync(tmp, 'w', 0o600)
+  const tmp = `${file}${TMP_SUFFIX}${process.pid}`
+  let fd
   try {
+    fd = openSync(tmp, 'w', 0o600)
     // writeFileSync по дескриптору дописывает буфер до конца сам (короткая запись writeSync не обрежет журнал)
     writeFileSync(fd, out.length ? out.join('\n') + '\n' : '')
     fsyncSync(fd)
-  } finally {
     closeSync(fd)
-  }
-  try {
+    fd = undefined
     renameSync(tmp, file)
   } catch (err) {
+    // Любой сбой — временную копию убираем: в ней могут остаться записи, которые просили удалить
+    if (fd !== undefined) {
+      try { closeSync(fd) } catch { /* дескриптор уже закрыт */ }
+    }
     try { unlinkSync(tmp) } catch { /* временного файла уже нет */ }
     throw err
   }
@@ -83,4 +95,27 @@ export function stripStoredNames(file) {
     return rest
   })
   return r.changed + r.broken
+}
+
+/**
+ * Удалить временные копии журнала, оставшиеся от перезаписи, прерванной падением процесса.
+ * Вызывается при запуске сервера, пока никто не пишет журнал (сервер работает одной репликой).
+ * @returns {number} сколько файлов удалено
+ */
+export function removeStaleTemps(file) {
+  const prefix = basename(file) + TMP_SUFFIX
+  let names
+  try {
+    names = readdirSync(dirname(file))
+  } catch (err) {
+    if (err.code === 'ENOENT') return 0
+    throw err
+  }
+  let removed = 0
+  for (const name of names) {
+    if (!name.startsWith(prefix)) continue
+    unlinkSync(join(dirname(file), name))
+    removed++
+  }
+  return removed
 }
