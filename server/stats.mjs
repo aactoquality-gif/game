@@ -87,10 +87,9 @@ export function buildReport(allEvents, { story = 'namertvo', episode = 1, chapte
     const key = playerKey(e)
     let p = byPlayer.get(key)
     if (!p) {
-      p = { key, userId: e.user_id ?? null, name: null, device: e.device ?? null, platform: e.platform, verified: false, events: [] }
+      p = { key, userId: e.user_id ?? null, device: e.device ?? null, platform: e.platform, verified: false, events: [] }
       byPlayer.set(key, p)
     }
-    if (e.user_name) p.name = e.user_name
     if (e.verified) p.verified = true
     p.events.push(e)
   }
@@ -206,7 +205,8 @@ function analyzePlayer(p, startScene) {
 
   return {
     key: p.key,
-    label: p.name ? `${p.name}${p.userId ? ` · ${p.userId}` : ''}` : p.userId ? `id ${p.userId}` : `браузер ${String(p.device).slice(-4)}`,
+    // Имён в отчёте нет: сервер хранит только Telegram ID (в старых записях user_name игнорируется)
+    label: p.userId ? `id ${p.userId}` : `браузер ${String(p.device).slice(-4)}`,
     platform: p.platform,
     verified: p.verified,
     runs: runs.length,
