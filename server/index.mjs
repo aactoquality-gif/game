@@ -6,9 +6,11 @@
  *   GET  /api/stats         — отчёт по гипотезам Г1 (admin cookie)
  *   GET  /api/stats/download — сырые события (admin cookie)
  *   GET  /api/health        — проверка, что сервер жив
+ *   POST /api/telegram/webhook — вебхук бота: /deletedata (server/bot.mjs)
  *
  * Переменные окружения:
  *   BOT_TOKEN  — токен бота; включает проверку подписи initData
+ *   BOT_WEBHOOK_SECRET — secret_token вебхука (A-Za-z0-9_-, до 256); без него вебхук выключен
  *   STATS_*   — настройки беспарольного входа, см. docs/stats-auth.md
  *   DATA_DIR   — куда писать events.jsonl (на Amvera — постоянный диск /data)
  *   PORT       — порт (по умолчанию 80)
@@ -30,6 +32,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 import { createStatsAuth, createClientIp } from './stats-auth.mjs'
 import { loadEvents, loadChapter, buildReport, renderHtml } from './stats.mjs'
 import { stripStoredNames, removeStaleTemps } from './events-store.mjs'
+import { createBotWebhook } from './bot.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -71,6 +74,7 @@ try {
 }
 
 const statsAuth = createStatsAuth({ dataDir: DATA_DIR })
+const bot = createBotWebhook({ secret: process.env.BOT_WEBHOOK_SECRET || '', eventsFile: EVENTS_FILE })
 const resolveClientIp = createClientIp(process.env.TRUSTED_PROXY_CIDRS)
 
 /** @type {Record<string, string>} */
@@ -479,6 +483,15 @@ const server = createServer(async (req, res) => {
   try {
     if (pathname === '/api/events' && req.method === 'POST') return await handleEvents(req, res)
     if (pathname === '/api/health' && req.method === 'GET') return sendJson(res, 200, { ok: true, version: VERSION })
+    if (pathname === '/api/telegram/webhook' && req.method === 'POST') {
+      if (!bot.enabled) return sendJson(res, 404, { error: 'not found' })
+      if (!bot.authorized(req)) return sendJson(res, 403, { error: 'forbidden' })
+      let update
+      try { update = await readBody(req) } catch (err) {
+        return sendJson(res, err.message === 'Body too large' ? 413 : 400, { error: 'invalid request' })
+      }
+      return bot.handle(res, update)
+    }
     if (pathname.startsWith('/api/stats/auth/') && req.method === 'POST') {
       const action = pathname.slice('/api/stats/auth/'.length)
       if (!['telegram', 'email/request', 'email/verify'].includes(action)) return sendJson(res, 404, { error: 'not found' })
@@ -524,4 +537,5 @@ server.listen(PORT, () => {
   console.log(`Game server ${VERSION} on :${PORT}  dist=${DIST_DIR}  data=${DATA_DIR}`)
   if (!BOT_TOKEN) console.warn('  ⚠ BOT_TOKEN не задан — подпись initData не проверяется')
   if (!statsAuth.enabled) console.warn('  ⚠ Stats authentication unavailable: configure STATS_SESSION_SECRET and STATS_ORIGIN')
+  if (!bot.enabled) console.warn('  ⚠ BOT_WEBHOOK_SECRET не задан — вебхук бота (/deletedata) выключен')
 })

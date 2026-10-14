@@ -119,3 +119,11 @@ export function removeStaleTemps(file) {
   }
   return removed
 }
+
+/**
+ * Удалить все события игрока по Telegram ID (запрос на удаление данных).
+ * @returns {number} сколько записей удалено
+ */
+export function deleteUserEvents(file, userId) {
+  return rewriteEvents(file, (event) => (event.user_id === userId ? null : event)).removed
+}
