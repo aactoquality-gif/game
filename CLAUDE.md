@@ -48,6 +48,15 @@
 - Имена событий аналитики и поля пачки не менять — по ним считается отчёт Г1.
 - `initDataUnsafe` — только для отображения (имя, аватар). Личность игрока — только `initData` с проверкой подписи
   на сервере (срок — 24 ч).
+- Персональные данные ✓ (`tests/events-privacy.test.mjs`): сервер хранит только числовой Telegram ID. Имя, фамилия,
+  username, фото и язык не пишутся ни на `/data`, ни в журнал (`console.*`); в журнал — только ID и тип события.
+  Апдейты бота и `initData` целиком не логировать. Покупка (с Г3) — ID игрока, товар, `telegram_payment_charge_id`,
+  сумма и время записи; больше ничего.
+- Удаление по запросу ✓ (`tests/bot-deletedata.test.mjs`): `/deletedata_confirm` в боте стирает всё, что сервер хранит
+  по Telegram ID. Новое хранилище с ID игрока (покупки, баланс, промокоды) — сразу в `/deletedata` (`docs/bot-webhook.md`).
+- Политика конфиденциальности — `public/privacy/index.html` (адрес `/privacy`, ссылка в BotFather). Любое новое поле
+  с данными игрока, новый сервис или срок хранения — в том же шаге строка в политике и новая дата «Обновлено».
+  Сейчас только RU; новый язык игры — перевод политики в том же релизе.
 - Telegram API — только через `telegram.ts`, с проверкой версии (`supports`) перед вызовом ✓.
 - Деньги (с Г3): баланс, покупки, промокоды — только на сервере, баланс — журнал записей. Цифровые товары в Telegram —
   только Stars. Покупку засчитывает сервер по `successful_payment` от бота, а не клиент по ответу `openInvoice`.
@@ -158,10 +167,11 @@
 ## 7. Стек, команды, проверки
 - Vanilla TypeScript (strict) + Vite 6. Без React и UI-фреймворков. Runtime-зависимостей нет — так и держать.
 - Сервер `server/index.mjs` — Node без npm-зависимостей: статика, `POST /api/events`, `GET /api/stats` (отчёт Г1 — `server/stats.mjs`;
-  вход в статистику — `server/stats-auth.mjs`: Telegram или код на email, `docs/stats-auth.md`).
+  вход в статистику — `server/stats-auth.mjs`: Telegram или код на email, `docs/stats-auth.md`),
+  `POST /api/telegram/webhook` (вебхук бота, `/deletedata` — `server/bot.mjs`, `docs/bot-webhook.md`).
   Медиа (`.mp3`, `.m4a`, `.ogg`) статика отдаёт с типом звука и Range (206 / 416): без этого iOS не играет звук.
 - Деплой: `Dockerfile` (сборка на node:22-alpine → Node-сервер), `amvera.yaml`, постоянный диск `/data`. Секреты —
-  `BOT_TOKEN` (подпись initData), `STATS_SESSION_SECRET`, `RESEND_API_KEY`; списки доступа к статистике — `STATS_ADMIN_TELEGRAM_IDS`,
+  `BOT_TOKEN` (подпись initData), `BOT_WEBHOOK_SECRET` (вебхук бота), `STATS_SESSION_SECRET`, `RESEND_API_KEY`; списки доступа к статистике — `STATS_ADMIN_TELEGRAM_IDS`,
   `STATS_ADMIN_EMAILS` (полный список переменных — `docs/stats-auth.md`) — только в переменных Amvera, не в репозитории и не в логах.
 - Бюджет: JS + CSS ≤ 50 КБ gzip (проверяет `check:ui`); первый экран ≤ 3 с на мобильном интернете.
 
@@ -171,7 +181,7 @@
 | `npm run dev:server` | локальный сервер аналитики на 3000 |
 | `npm run build` | `tsc` + `vite build` |
 | `npm run check:rules` | правила кода, CSS, зависимостей, контента и публикации — без браузера, ~1 с |
-| `npm run test:server` | тесты сервера (`tests/*.test.mjs`, `node --test`): вход в статистику |
+| `npm run test:server` | тесты сервера (`tests/*.test.mjs`, `node --test`): вход в статистику, приём событий без имён и подпись `initData`, перезапись журнала, `/deletedata` |
 | `npm run check:ui` | `check:rules` + сборка + интерфейс в Chromium; отчёт `.checks/ui/report.html` |
 
 - `✗` — ошибка, проверка красная. `!` — замечание: не блокирует, новые — в отчёт.
@@ -237,11 +247,19 @@
   Новый язык — файл `src/locales/<код>.ts` с полным переводом; выбор языка игроком — шаг 5.2.
 - `src/style.css` — токены (`:root`) и стили. Палитра «cozy dark» своя, не из темы Telegram.
 - `public/content/ru/` — `catalog.json` (истории и эпизоды), `ch1.json` (эпизод). Контент правит автор (правило 16).
+- `public/privacy/index.html` — политика конфиденциальности: отдельная статичная страница без JS, не часть игры;
+  `tests/privacy-page.test.mjs` не пускает её с заглушкой вместо почты.
 - `scripts/check-rules.mjs`, `scripts/check-ui.mjs` — автопроверки (`docs/check-ui.md`); `scripts/check-stats-ui.mjs` — страница
   входа в статистику (часть `check:ui`). `server/` — сервер и отчёт Г1; `tests/` — тесты сервера.
 - `stats-login.html` + `src/stats-login.ts` / `.css` — админ-страница входа в статистику, не часть игры: своя светлая палитра
   и переход после входа — в исключениях `check:rules` (`ALLOW.ownPalette`, `ALLOW.openLink`).
-  `docs/` — справочники для людей. `.github/workflows/check.yml` — CI.
+- `server/events-store.mjs` — атомарная перезапись `events.jsonl` (временный файл → fsync → rename). При запуске сервер
+  убирает `user_name` из записей до 14.10.2026; файл без имён не перезаписывается. Битые строки при перезаписи
+  выбрасываются (отчёт их и так пропускает); при сбое и при запуске удаляются копии `events.jsonl.tmp-*`.
+  `deleteUserEvents` — для `/deletedata`.
+- `server/bot.mjs` — вебхук бота: проверка `X-Telegram-Bot-Api-Secret-Token`, команды `/deletedata` → `/deletedata_confirm`,
+  ответ в теле вебхука. Только личный чат; апдейт не логируется.
+- `docs/` — справочники для людей. `.github/workflows/check.yml` — CI.
 
 ## 9. Отладка
 `?debug` → в консоли `__game.state()`. Посмотреть выключенное: `?ff=economy_enabled,inbox_enabled`

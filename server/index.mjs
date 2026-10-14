@@ -6,15 +6,20 @@
  *   GET  /api/stats         — отчёт по гипотезам Г1 (admin cookie)
  *   GET  /api/stats/download — сырые события (admin cookie)
  *   GET  /api/health        — проверка, что сервер жив
+ *   POST /api/telegram/webhook — вебхук бота: /deletedata (server/bot.mjs)
  *
  * Переменные окружения:
  *   BOT_TOKEN  — токен бота; включает проверку подписи initData
+ *   BOT_WEBHOOK_SECRET — secret_token вебхука (A-Za-z0-9_-, до 256); без него вебхук выключен
  *   STATS_*   — настройки беспарольного входа, см. docs/stats-auth.md
  *   DATA_DIR   — куда писать events.jsonl (на Amvera — постоянный диск /data)
  *   PORT       — порт (по умолчанию 80)
  *
  * Валидация initData: HMAC-SHA256 по спеке Telegram
  * https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
+ *
+ * Персональные данные: из initData на сервер попадает только числовой Telegram ID.
+ * Имя, username, фото и язык не пишутся ни в events.jsonl, ни в журнал (console).
  *
  * Зависимости: ноль (только Node built-in модули).
  */
@@ -26,6 +31,8 @@ import { dirname, join, extname, resolve, sep } from 'node:path'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { createStatsAuth, createClientIp } from './stats-auth.mjs'
 import { loadEvents, loadChapter, buildReport, renderHtml } from './stats.mjs'
+import { stripStoredNames, removeStaleTemps } from './events-store.mjs'
+import { createBotWebhook } from './bot.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 
@@ -50,7 +57,24 @@ const RATE_LIMIT_PER_MIN = 120
 // ---------------------------------------------------------------------------
 
 mkdirSync(DATA_DIR, { recursive: true })
+
+// Незавершённые копии журнала после падения — удалить; имена игроков из записей до 14.10.2026 — вычистить.
+// Файл без имён не перезаписывается
+try {
+  const stale = removeStaleTemps(EVENTS_FILE)
+  if (stale) console.log(`[privacy] удалены незавершённые копии журнала: ${stale}`)
+} catch (err) {
+  console.error(`[privacy] не удалось удалить копии журнала: ${err.code || err.message}`)
+}
+try {
+  const cleaned = stripStoredNames(EVENTS_FILE)
+  if (cleaned) console.log(`[privacy] из старых событий убраны имена и битые строки: ${cleaned}`)
+} catch (err) {
+  console.error(`[privacy] не удалось убрать имена из ${EVENTS_FILE}: ${err.code || err.message}`)
+}
+
 const statsAuth = createStatsAuth({ dataDir: DATA_DIR })
+const bot = createBotWebhook({ secret: process.env.BOT_WEBHOOK_SECRET || '', eventsFile: EVENTS_FILE })
 const resolveClientIp = createClientIp(process.env.TRUSTED_PROXY_CIDRS)
 
 /** @type {Record<string, string>} */
@@ -126,14 +150,16 @@ setInterval(() => {
  * Разобрать initData.
  * С BOT_TOKEN — проверить подпись и срок; при ошибке вернуть null.
  * Без BOT_TOKEN (dev) — вернуть пользователя без проверки, verified: false.
- * @returns {{ user: { id?: number, first_name?: string } | null, verified: boolean } | null}
+ * Из пользователя наружу отдаётся только числовой id — имя и username дальше не уходят.
+ * @returns {{ user: { id: number } | null, verified: boolean } | null}
  */
 function parseInitData(raw) {
   const params = new URLSearchParams(raw)
   let user = null
   try {
     const u = params.get('user')
-    if (u) user = JSON.parse(u)
+    const id = u ? JSON.parse(u)?.id : null
+    if (Number.isSafeInteger(id) && id > 0) user = { id }
   } catch { /* ignore */ }
 
   if (!BOT_TOKEN) return { user, verified: false }
@@ -235,15 +261,14 @@ async function handleEvents(req, res) {
   if (!Array.isArray(events) || events.length === 0) return sendJson(res, 400, { error: 'no events' })
   if (events.length > MAX_EVENTS) return sendJson(res, 400, { error: 'too many events' })
 
-  // Кто прислал. Без initData — режим браузера, игрок анонимный (различаем по device)
+  // Кто прислал. Без initData — режим браузера, игрок анонимный (различаем по device).
+  // Из initData берём только ID: имя и username на сервере не храним (решение владельца, 14.10.2026)
   let userId = null
-  let userName = null
   let verified = false
   if (rawInitData) {
     const parsed = parseInitData(String(rawInitData))
     if (!parsed) return sendJson(res, 403, { error: 'invalid initData' })
     userId = parsed.user?.id ?? null
-    userName = typeof parsed.user?.first_name === 'string' ? parsed.user.first_name.slice(0, 64) : null
     verified = parsed.verified
   }
 
@@ -251,7 +276,7 @@ async function handleEvents(req, res) {
   const lines = []
   for (const raw of events) {
     const e = cleanEvent(raw)
-    if (e) lines.push(JSON.stringify({ ...e, user_id: userId, user_name: userName, verified, server_ts: serverTs }))
+    if (e) lines.push(JSON.stringify({ ...e, user_id: userId, verified, server_ts: serverTs }))
   }
   if (lines.length === 0) return sendJson(res, 400, { error: 'no valid events' })
 
@@ -458,6 +483,15 @@ const server = createServer(async (req, res) => {
   try {
     if (pathname === '/api/events' && req.method === 'POST') return await handleEvents(req, res)
     if (pathname === '/api/health' && req.method === 'GET') return sendJson(res, 200, { ok: true, version: VERSION })
+    if (pathname === '/api/telegram/webhook' && req.method === 'POST') {
+      if (!bot.enabled) return sendJson(res, 404, { error: 'not found' })
+      if (!bot.authorized(req)) return sendJson(res, 403, { error: 'forbidden' })
+      let update
+      try { update = await readBody(req) } catch (err) {
+        return sendJson(res, err.message === 'Body too large' ? 413 : 400, { error: 'invalid request' })
+      }
+      return bot.handle(res, update)
+    }
     if (pathname.startsWith('/api/stats/auth/') && req.method === 'POST') {
       const action = pathname.slice('/api/stats/auth/'.length)
       if (!['telegram', 'email/request', 'email/verify'].includes(action)) return sendJson(res, 404, { error: 'not found' })
@@ -503,4 +537,5 @@ server.listen(PORT, () => {
   console.log(`Game server ${VERSION} on :${PORT}  dist=${DIST_DIR}  data=${DATA_DIR}`)
   if (!BOT_TOKEN) console.warn('  ⚠ BOT_TOKEN не задан — подпись initData не проверяется')
   if (!statsAuth.enabled) console.warn('  ⚠ Stats authentication unavailable: configure STATS_SESSION_SECRET and STATS_ORIGIN')
+  if (!bot.enabled) console.warn('  ⚠ BOT_WEBHOOK_SECRET не задан — вебхук бота (/deletedata) выключен')
 })
