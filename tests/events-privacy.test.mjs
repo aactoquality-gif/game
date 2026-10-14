@@ -24,6 +24,8 @@ const OLD_LINES = [
   { event: 'screen_view', ts: 2, story: 'namertvo', episode: 1, screen: 'e1_s02', run: 1, platform: 'browser', session: 's2', device: 'd2', user_id: null, user_name: null, verified: false, server_ts: 2 },
   { event: 'episode_start', ts: 3, story: 'namertvo', episode: 1, screen: 'e1_s01', run: 1, platform: 'telegram', session: 's3', device: 'd3', user_id: 1002, verified: true, server_ts: 3 },
 ]
+/** Оборванная запись (падение посреди дозаписи): JSON не читается, но имя внутри есть */
+const BROKEN_LINE = '{"event":"screen_view","ts":4,"user_id":1003,"user_name":"Битое Имя","verif'
 
 let dir
 let child
@@ -89,7 +91,7 @@ before(async () => {
   mkdirSync(join(dir, 'dist'), { recursive: true })
   writeFileSync(join(dir, 'dist', 'index.html'), '<!doctype html>')
   mkdirSync(join(dir, 'data'))
-  writeFileSync(join(dir, 'data', 'events.jsonl'), OLD_LINES.map((l) => JSON.stringify(l)).join('\n') + '\n')
+  writeFileSync(join(dir, 'data', 'events.jsonl'), [JSON.stringify(OLD_LINES[0]), BROKEN_LINE, ...OLD_LINES.slice(1).map((l) => JSON.stringify(l))].join('\n') + '\n')
   port = await freePort()
   child = spawn(process.execPath, [join(dir, 'server', 'index.mjs')], {
     env: { ...process.env, PORT: String(port), DATA_DIR: join(dir, 'data'), BOT_TOKEN },
@@ -117,15 +119,17 @@ after(() => {
   if (dir) rmSync(dir, { recursive: true, force: true })
 })
 
-test('старые записи: имена вычищены при запуске, события и ID на месте', () => {
+test('старые записи: имена вычищены при запуске, битая строка с именем выброшена, события и ID на месте', () => {
   const lines = storedLines()
   assert.equal(lines.length, OLD_LINES.length)
   const stored = lines.map((l) => JSON.parse(l))
   for (const e of stored) assert.ok(!Object.hasOwn(e, 'user_name'), 'user_name остался')
   assert.deepEqual(stored.map((e) => e.user_id), OLD_LINES.map((e) => e.user_id))
   assert.deepEqual(stored.map((e) => e.screen), OLD_LINES.map((e) => e.screen))
-  assert.ok(!readFileSync(eventsFile(), 'utf8').includes('Старое Имя'))
-  assert.match(output, /\[privacy\] из старых событий убраны имена: 2/)
+  const raw = readFileSync(eventsFile(), 'utf8')
+  assert.ok(!raw.includes('Старое Имя'))
+  assert.ok(!raw.includes('Битое Имя'))
+  assert.match(output, /\[privacy\] из старых событий убраны имена: 3/)
 })
 
 test('подписанный initData: в событии только ID, без имени и username', async () => {
