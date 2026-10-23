@@ -32,3 +32,6 @@ dist-ssr
 
 # UI check reports (npm run check:ui)
 .checks
+
+# Telegram Serverless local state
+.tgcloud

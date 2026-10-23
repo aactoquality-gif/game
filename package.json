@@ -11,9 +11,11 @@
     "check:ui": "npm run check:rules && npm run build && node scripts/check-ui.mjs",
     "preview": "vite preview",
     "start": "node server/index.mjs",
-    "test:server": "node --test tests/*.test.mjs"
+    "test:server": "node --test tests/*.test.mjs",
+    "deploy": "npm run build && tgcloud push"
   },
   "devDependencies": {
+    "@tgcloud/cli": "^0.2.0",
     "playwright-core": "^1.63.0",
     "typescript": "~5.7.3",
     "vite": "^6.3.0"
