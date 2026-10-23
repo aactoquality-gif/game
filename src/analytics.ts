@@ -66,9 +66,10 @@ const session = randomId()
 const device = loadDeviceId()
 
 let buffer: AnalyticsEvent[] = []
-let flushTimer: ReturnType<typeof setInterval> | undefined
 /** Пачка уже в пути: следующая уходит после ответа, а не параллельно */
 let sending = false
+/** Инициализация была — таймер и слушатели поставлены */
+let initialized = false
 
 /** Счётчик экранов за текущий run в этой сессии */
 let screensInRun = 0
@@ -85,12 +86,14 @@ export function initAnalytics(opts: { platform: Platform; initData: string }): v
   platform = opts.platform
   initData = opts.initData
 
-  clearInterval(flushTimer)
-  flushTimer = setInterval(() => flush(false), FLUSH_INTERVAL_MS)
+  if (initialized) return
+  initialized = true
+
+  setInterval(flushNormal, FLUSH_INTERVAL_MS)
 
   document.addEventListener('visibilitychange', onVisibilityChange)
   // Страховка: если WebView закрыли без смены видимости — досылаем очередь при выгрузке страницы
-  window.addEventListener('pagehide', () => flush(true))
+  window.addEventListener('pagehide', onPageHide)
 }
 
 /** Обновить контекст (при смене эпизода, рестарте, смене экрана) */
@@ -139,8 +142,22 @@ export function getScreensInRun(): number {
 function onVisibilityChange(): void {
   if (document.visibilityState === 'hidden') {
     track(inEpisode ? 'episode_exit' : 'app_hide', inEpisode ? { screens_viewed: screensInRun, reason: 'hide' } : undefined)
-    flush(true)
+    flushEmergency()
   }
+}
+
+function onPageHide(): void {
+  flushEmergency()
+}
+
+/** Обычный сброс по таймеру — fetch */
+function flushNormal(): void {
+  flush(false)
+}
+
+/** Экстренный сброс (сворачивание, закрытие) — sendBeacon */
+function flushEmergency(): void {
+  flush(true)
 }
 
 /**

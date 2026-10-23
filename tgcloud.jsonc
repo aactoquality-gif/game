@@ -1,0 +1,8 @@
+{
+  "$schema": "./node_modules/@tgcloud/cli/schema/tgcloud.json",
+  // Статика фронтенда: Vite билдит в dist/, ассеты — с хешем, кэшируются навсегда
+  "static": {
+    "source": "dist",
+    "immutable": ["/assets/*"]
+  }
+}

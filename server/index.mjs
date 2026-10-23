@@ -20,7 +20,9 @@
  */
 
 import { createServer } from 'node:http'
-import { createReadStream, existsSync, mkdirSync, appendFileSync, statSync } from 'node:fs'
+import { createReadStream, existsSync, mkdirSync, statSync } from 'node:fs'
+import { appendFile, access, stat } from 'node:fs/promises'
+import { constants as fsConstants } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join, extname, resolve, sep } from 'node:path'
 import { createHmac, timingSafeEqual } from 'node:crypto'
@@ -44,6 +46,8 @@ const MAX_EVENTS = 100
 const INIT_DATA_MAX_AGE_S = 24 * 60 * 60
 /** Лимит запросов с одного IP в минуту */
 const RATE_LIMIT_PER_MIN = 120
+/** Сколько пачек событий может ждать записи на диск */
+const MAX_PENDING_EVENT_WRITES = 100
 
 // ---------------------------------------------------------------------------
 // Подготовка
@@ -94,6 +98,40 @@ function sendJson(res, status, obj, extraHeaders = {}) {
 
 function clientIp(req) {
   return resolveClientIp(req)
+}
+
+
+// ---------------------------------------------------------------------------
+// Очередь записи аналитики
+// ---------------------------------------------------------------------------
+
+let eventWriteQueue = Promise.resolve()
+let pendingEventWrites = 0
+let eventStorageHealthy = true
+let lastEventStorageError = null
+
+function appendEventsAsync(payload) {
+  if (pendingEventWrites >= MAX_PENDING_EVENT_WRITES) {
+    return Promise.reject(new Error('Event write queue is full'))
+  }
+
+  pendingEventWrites++
+  const write = eventWriteQueue.then(() => appendFile(EVENTS_FILE, payload, 'utf8'))
+  eventWriteQueue = write.catch(() => {})
+
+  return write
+    .then(() => {
+      eventStorageHealthy = true
+      lastEventStorageError = null
+    })
+    .catch((err) => {
+      eventStorageHealthy = false
+      lastEventStorageError = err instanceof Error ? err.message : String(err)
+      throw err
+    })
+    .finally(() => {
+      pendingEventWrites--
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -256,7 +294,7 @@ async function handleEvents(req, res) {
   if (lines.length === 0) return sendJson(res, 400, { error: 'no valid events' })
 
   try {
-    appendFileSync(EVENTS_FILE, lines.join('\n') + '\n')
+    await appendEventsAsync(lines.join('\n') + '\n')
   } catch (err) {
     console.error('Не удалось записать события:', err)
     return sendJson(res, 500, { error: 'storage error' })
@@ -499,8 +537,9 @@ const server = createServer(async (req, res) => {
   }
 })
 
-server.listen(PORT, () => {
-  console.log(`Game server ${VERSION} on :${PORT}  dist=${DIST_DIR}  data=${DATA_DIR}`)
+const HOST = process.env.HOST || '0.0.0.0'
+server.listen(PORT, HOST, () => {
+  console.log(`Game server ${VERSION} on ${HOST}:${PORT}  dist=${DIST_DIR}  data=${DATA_DIR}`)
   if (!BOT_TOKEN) console.warn('  ⚠ BOT_TOKEN не задан — подпись initData не проверяется')
   if (!statsAuth.enabled) console.warn('  ⚠ Stats authentication unavailable: configure STATS_SESSION_SECRET and STATS_ORIGIN')
 })
